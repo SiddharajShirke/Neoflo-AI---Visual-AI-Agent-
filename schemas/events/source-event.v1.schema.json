@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/events/source-event.v1.schema.json",
+  "title": "SourceEventEnvelope",
+  "description": "Contract placeholder only; Milestone 0 does not capture or persist browser events.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourceEventId"],
+  "properties": {
+    "schemaVersion": { "const": "v1" },
+    "sourceEventId": { "type": "string", "format": "uuid" }
+  }
+}

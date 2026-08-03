@@ -8,7 +8,6 @@ import re
 import sys
 from pathlib import Path
 
-
 REQUIRED_SKILLS = {
     "visual-ai-architecture", "chrome-extension-engineering",
     "privacy-security-review", "supabase-backend", "langgraph-agent-engineering",

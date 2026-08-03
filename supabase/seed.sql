@@ -1,0 +1,1 @@
+-- Milestone 0 intentionally contains no product seed data.

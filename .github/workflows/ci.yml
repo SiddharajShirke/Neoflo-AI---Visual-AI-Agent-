@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:contract
+      - run: pnpm build
+      - run: pnpm secret:scan
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install --upgrade pip
+      - run: .venv/bin/python -m pip install -r requirements-dev.txt -e packages/python-shared -e apps/api -e apps/worker
+      - run: .venv/bin/python -m ruff check .
+      - run: .venv/bin/python -m mypy apps/api/src apps/worker/src packages/python-shared/src
+      - run: .venv/bin/python -m pytest
+      - run: .venv/bin/python scripts/validate-skills.py
+      - run: .venv/bin/python -m unittest tests/test_validate_skills.py -v

@@ -1,0 +1,4 @@
+packages:
+  - apps/dashboard
+  - apps/extension
+  - packages/contracts

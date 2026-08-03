@@ -1,0 +1,35 @@
+# Dependencies and build output
+node_modules/
+.pnpm-store/
+.turbo/
+dist/
+.next/
+.wxt/
+.output/
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Environment and local services
+.env
+.env.local
+.env.*.local
+!.env.example
+supabase/.temp/
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local worktrees
+.worktrees/
+worktrees/
