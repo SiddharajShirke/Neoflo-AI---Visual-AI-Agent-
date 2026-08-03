@@ -2,17 +2,17 @@
 
 These repository-scoped skills live in `.agents/skills`. They supplement `AGENTS.md`: `AGENTS.md` supplies repository-wide rules, while a skill supplies a focused workflow for a specific task. In this currently skeletal repository, the requested target architecture is the baseline; update the skills if future repository documentation establishes different decisions.
 
-| Skill | Invoke for |
-| --- | --- |
-| `visual-ai-architecture` | architecture, boundaries, ADRs, data flow |
-| `chrome-extension-engineering` | Manifest V3 extension and browser capture |
-| `privacy-security-review` | threat models and sensitive changes |
-| `supabase-backend` | Auth, database, Storage, Queues, RLS, pgvector |
-| `langgraph-agent-engineering` | workflows, prompts, providers, AI observations |
-| `ai-evaluation` | prompt/model and AI-output evaluation |
-| `deployment-vercel-render` | Vercel dashboard or Render API deployment |
-| `end-to-end-testing` | full synthetic cross-component flow |
-| `release-verification` | release gate or milestone claim |
+| Skill                          | Invoke for                                     |
+| ------------------------------ | ---------------------------------------------- |
+| `visual-ai-architecture`       | architecture, boundaries, ADRs, data flow      |
+| `chrome-extension-engineering` | Manifest V3 extension and browser capture      |
+| `privacy-security-review`      | threat models and sensitive changes            |
+| `supabase-backend`             | Auth, database, Storage, Queues, RLS, pgvector |
+| `langgraph-agent-engineering`  | workflows, prompts, providers, AI observations |
+| `ai-evaluation`                | prompt/model and AI-output evaluation          |
+| `deployment-vercel-render`     | Vercel dashboard or Render API deployment      |
+| `end-to-end-testing`           | full synthetic cross-component flow            |
+| `release-verification`         | release gate or milestone claim                |
 
 Example invocations: “Use `chrome-extension-engineering` to add event capture”; “Use `supabase-backend` and `privacy-security-review` to add a user-owned table”; “Use `deployment-vercel-render` to review production CORS”; “Use `release-verification` before handoff.”
 

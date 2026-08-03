@@ -1,0 +1,13 @@
+[project]
+name = "visual-ai-api"
+version = "0.0.0"
+requires-python = "==3.11.9"
+dependencies = [
+  "fastapi==0.115.11",
+  "uvicorn[standard]==0.34.0",
+  "visual-ai-shared"
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"

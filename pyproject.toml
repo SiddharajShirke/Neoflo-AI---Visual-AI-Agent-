@@ -1,0 +1,12 @@
+[project]
+name = "visual-ai-browser-agent"
+version = "0.0.0"
+requires-python = "==3.11.9"
+
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests", "apps/worker/tests", "packages/python-shared/tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["visual_ai_api", "visual_ai_worker", "visual_ai_shared"]

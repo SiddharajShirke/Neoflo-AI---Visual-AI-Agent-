@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "scripts" / "validate-skills.py"
 
@@ -24,12 +23,16 @@ class ValidateSkillsTests(unittest.TestCase):
     def test_accepts_valid_skill_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             skills_root = Path(temporary_directory) / "skills"
-            skill = skills_root / "sample-skill"
-            skill.mkdir(parents=True)
-            (skill / "SKILL.md").write_text(
-                "---\nname: sample-skill\ndescription: Use for sample work.\n---\n\n# Sample\n\nFollow the repository rules.\n",
-                encoding="utf-8",
-            )
+            for name in load_validator().REQUIRED_SKILLS | {"sample-skill"}:
+                skill = skills_root / name
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text(
+                    "---\n"
+                    f"name: {name}\n"
+                    "description: Use for sample work.\n"
+                    "---\n\n# Sample\n\nFollow the repository rules.\n",
+                    encoding="utf-8",
+                )
 
             self.assertEqual(load_validator().validate(skills_root), [])
 
@@ -39,7 +42,9 @@ class ValidateSkillsTests(unittest.TestCase):
             skill = skills_root / "wrong-name"
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text(
-                "---\nname: another-name\ndescription: x\n---\n\nC:/Users/alice/private\napi_key = 'sk-abcdefghijklmnopqrstuvwxyz123456'\n",
+                "---\nname: another-name\ndescription: x\n---\n\n"
+                "C:/Users/alice/private\n"
+                "api_key = 'sk-abcdefghijklmnopqrstuvwxyz123456'\n",
                 encoding="utf-8",
             )
 
