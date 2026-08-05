@@ -1,3 +1,4 @@
 project_id = "visual-ai-browser-agent"
 
-# Milestone 0 contains no product schema, policies, queues, buckets, or extensions.
+# Milestone 1 owns schema migrations, private bucket policies, queues, and SQL tests.
+# No automatic retention schedule is configured here.

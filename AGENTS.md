@@ -24,6 +24,7 @@
 - Add forward-only Supabase migrations only after the relevant milestone is approved. Never edit an applied migration.
 - Run formatting, linting, type checks, focused tests, builds, and secret scanning before handoff. Do not claim completion without fresh command output.
 
-## Milestone 0 guardrail
+## Milestone boundaries
 
-Milestone 0 creates only repository foundation and runnable shells. It must not add product tables, RLS or Storage policies, queues, pgvector, product API routes, real authentication, browser capture, screenshots, LLM calls, or provider integrations.
+- Milestone 0 created repository foundation and runnable shells.
+- Milestone 1 may add only Supabase schema, RLS, private Storage policies, queue primitives, retention candidates, synthetic SQL tests, and supporting documentation. It must not add API product routes, extension capture, screenshot capture/upload/deletion orchestration, signed URL behavior, LangGraph/LLM processing, dashboard product pages, retention schedules, or deployment changes.

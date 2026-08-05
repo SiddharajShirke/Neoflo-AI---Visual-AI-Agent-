@@ -37,4 +37,17 @@ pnpm --filter @visual-ai/dashboard dev
 ./.venv/bin/python -m uvicorn visual_ai_api.main:app --reload
 ```
 
-The environment examples contain names and non-secret local defaults only. Do not create real product data or configure production credentials for Milestone 0.
+The environment examples contain names and non-secret local defaults only. Do not create real product data or configure production credentials locally.
+
+## Supabase foundation
+
+Milestone 1 uses only the local Supabase CLI and synthetic SQL fixtures. From the repository root, run:
+
+```powershell
+pnpm.cmd supabase:migration-check
+supabase start
+supabase db reset
+supabase test db
+```
+
+On Unix or macOS, use `pnpm supabase:migration-check` instead. These commands do not enable a retention schedule and do not prove physical deletion of Storage objects; that orchestration is deferred to a later API/worker milestone.

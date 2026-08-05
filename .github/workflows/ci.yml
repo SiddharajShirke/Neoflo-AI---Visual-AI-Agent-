@@ -38,3 +38,15 @@ jobs:
       - run: .venv/bin/python -m pytest
       - run: .venv/bin/python scripts/validate-skills.py
       - run: .venv/bin/python -m unittest tests/test_validate_skills.py -v
+  supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: supabase start
+      - run: supabase db reset
+      - run: node scripts/check-supabase-migrations.mjs
+      - run: supabase test db
