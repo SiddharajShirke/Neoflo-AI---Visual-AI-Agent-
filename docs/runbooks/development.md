@@ -23,6 +23,11 @@ pnpm build
 pnpm secret:scan
 .venv\Scripts\python.exe scripts/validate-skills.py
 .venv\Scripts\python.exe -m unittest tests/test_validate_skills.py -v
+
+pnpm supabase:migration-check
+supabase start
+supabase db reset
+supabase test db
 ```
 
-`supabase/` is a directory scaffold only in this milestone. Do not run product database, policy, queue, Storage, or pgvector setup commands until a later approved milestone.
+Milestone 1 runs only local synthetic Supabase tests. `supabase/tests/000_setup.sql` enables pgTAP only in the local test database; it is not a production migration. The milestone creates no production retention schedule and does not perform Storage API deletion.
