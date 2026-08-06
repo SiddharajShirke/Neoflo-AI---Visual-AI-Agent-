@@ -7,6 +7,7 @@ export default [
       '**/node_modules/**',
       '**/.next/**',
       '**/.output/**',
+      '**/.python/**',
       '**/.venv/**',
       '**/.wxt/**',
       '**/dist/**',

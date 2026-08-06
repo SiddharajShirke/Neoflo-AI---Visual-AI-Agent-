@@ -9,13 +9,19 @@ dist/
 coverage/
 
 # Python
+.python/
 .venv/
+.uv-cache/
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+ruff-milestone-2.txt
+
+# Local build output
+build/
 
 # Environment and local services
 .env

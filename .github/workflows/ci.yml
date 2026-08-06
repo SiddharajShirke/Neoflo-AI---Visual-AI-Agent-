@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, develop, feature/fastapi-foundation]
 
 jobs:
   typescript:
@@ -22,7 +22,26 @@ jobs:
       - run: pnpm test
       - run: pnpm test:contract
       - run: pnpm build
+      - run: pnpm secret:scan:test
       - run: pnpm secret:scan
+  contracts:
+    name: Contract generation and fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install --upgrade pip
+      - run: .venv/bin/python -m pip install -r requirements-dev.txt -e packages/python-shared -e apps/api
+      - run: pnpm contracts:check
   python:
     runs-on: ubuntu-latest
     steps:
@@ -39,10 +58,13 @@ jobs:
       - run: .venv/bin/python scripts/validate-skills.py
       - run: .venv/bin/python -m unittest tests/test_validate_skills.py -v
   supabase:
+    name: Supabase disposable integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
+        with:
+          version: 2.111.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
