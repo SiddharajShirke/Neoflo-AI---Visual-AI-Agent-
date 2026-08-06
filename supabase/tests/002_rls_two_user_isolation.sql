@@ -21,8 +21,8 @@ values
 
 insert into public.monitoring_sessions (id, user_id, device_id, monitoring_consent_id, status, started_at, ended_at, capture_policy_version)
 values
-  ('30000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a1', '10000000-0000-0000-0000-0000000000a1', '20000000-0000-0000-0000-0000000000a1', 'stopped', now() - interval '1 minute', now(), 'test-v1'),
-  ('30000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000b2', '10000000-0000-0000-0000-0000000000b2', '20000000-0000-0000-0000-0000000000b2', 'stopped', now() - interval '1 minute', now(), 'test-v1');
+  ('30000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a1', '10000000-0000-0000-0000-0000000000a1', '20000000-0000-0000-0000-0000000000a1', 'completed', now() - interval '1 minute', now(), 'test-v1'),
+  ('30000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000b2', '10000000-0000-0000-0000-0000000000b2', '20000000-0000-0000-0000-0000000000b2', 'completed', now() - interval '1 minute', now(), 'test-v1');
 
 insert into public.browser_events (id, user_id, device_id, session_id, client_event_id, event_kind, occurred_at, capture_policy_version)
 values

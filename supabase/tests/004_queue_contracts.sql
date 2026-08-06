@@ -21,7 +21,7 @@ values ('10000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000
 insert into public.consent_records (id, user_id, device_id, scope, policy_version, granted)
 values ('20000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1', 'monitoring', 'test-v1', true);
 insert into public.monitoring_sessions (id, user_id, device_id, monitoring_consent_id, status, started_at, ended_at, capture_policy_version)
-values ('30000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1', '20000000-0000-0000-0000-0000000000e1', 'stopped', now() - interval '1 minute', now(), 'test-v1');
+values ('30000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1', '20000000-0000-0000-0000-0000000000e1', 'completed', now() - interval '1 minute', now(), 'test-v1');
 insert into public.browser_events (id, user_id, device_id, session_id, client_event_id, event_kind, occurred_at, capture_policy_version)
 values ('40000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000e1', '10000000-0000-0000-0000-0000000000e1', '30000000-0000-0000-0000-0000000000e1', 'test-queue-event', 'navigation', now(), 'test-v1');
 insert into public.deletion_requests (id, user_id, session_id, scope, status)
