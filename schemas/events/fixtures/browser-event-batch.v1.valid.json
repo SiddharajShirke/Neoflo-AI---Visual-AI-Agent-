@@ -1,0 +1,18 @@
+{
+  "device_id": "00000000-0000-0000-0000-0000000000b1",
+  "session_id": "00000000-0000-0000-0000-0000000000c1",
+  "events": [
+    {
+      "client_event_id": "event-1",
+      "sequence_number": 1,
+      "event_kind": "navigation",
+      "occurred_at": "2026-08-06T10:30:00Z",
+      "page_origin": "https://example.test",
+      "page_path_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "page_title_redacted": "Redacted page title",
+      "accessibility_context_redacted": "Redacted accessibility context",
+      "context_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "capture_policy_version": "v1"
+    }
+  ]
+}
