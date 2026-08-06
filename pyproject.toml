@@ -1,12 +1,27 @@
 [project]
 name = "visual-ai-browser-agent"
 version = "0.0.0"
-requires-python = "==3.11.9"
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["apps/api", "apps/worker", "packages/python-shared"]
+
+[tool.uv.sources]
+visual-ai-shared = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["apps/api/tests", "apps/worker/tests", "packages/python-shared/tests"]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 packages = ["visual_ai_api", "visual_ai_worker", "visual_ai_shared"]
+
+[dependency-groups]
+dev = [
+    "mypy==1.15.0",
+    "pytest==8.3.5",
+    "pytest-asyncio>=1.3.0",
+    "ruff==0.11.0",
+]
