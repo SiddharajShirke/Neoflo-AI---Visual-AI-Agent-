@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/events/browser-event.v2.schema.json",
+  "title": "BrowserEventV2",
+  "description": "Privacy-minimized top-level navigation event. URL, page content, and browser identifiers are prohibited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "client_event_id",
+    "sequence_number",
+    "event_kind",
+    "occurred_at",
+    "page_domain",
+    "transition_type",
+    "capture_policy_version"
+  ],
+  "properties": {
+    "client_event_id": { "type": "string", "format": "uuid" },
+    "sequence_number": { "type": "integer", "minimum": 1 },
+    "event_kind": { "const": "navigation" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "page_domain": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 253,
+      "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+    },
+    "transition_type": {
+      "type": "string",
+      "enum": [
+        "link",
+        "typed",
+        "auto_bookmark",
+        "generated",
+        "start_page",
+        "form_submit",
+        "reload",
+        "keyword",
+        "keyword_generated"
+      ]
+    },
+    "capture_policy_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}

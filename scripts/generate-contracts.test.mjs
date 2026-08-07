@@ -16,6 +16,12 @@ test('contract generation produces the deterministic browser event artifact', ()
   assert.match(contents, /generated from schemas\/events/);
   assert.match(contents, /events: BrowserEvent\[\];/);
 
+  const v2Generated = 'packages/contracts/src/generated/browser-event-v2.ts';
+  assert.equal(existsSync(v2Generated), true);
+  const v2Contents = readFileSync(v2Generated, 'utf8');
+  assert.match(v2Contents, /BrowserEventV2/);
+  assert.match(v2Contents, /events: BrowserEventV2\[\];/);
+
   const controlGenerated = 'packages/contracts/src/generated/control-plane.ts';
   assert.equal(existsSync(controlGenerated), true);
   const controlContents = readFileSync(controlGenerated, 'utf8');

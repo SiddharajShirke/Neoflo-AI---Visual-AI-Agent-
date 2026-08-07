@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/events/browser-event-batch.v2.schema.json",
+  "title": "BrowserEventBatchV2",
+  "description": "Batch ownership and session metadata with privacy-minimized navigation events only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "session_id", "events"],
+  "properties": {
+    "device_id": { "type": "string", "format": "uuid" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "browser-event.v2.schema.json" }
+    }
+  }
+}

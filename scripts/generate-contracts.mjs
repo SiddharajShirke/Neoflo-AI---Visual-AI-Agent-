@@ -7,6 +7,8 @@ const root = process.cwd();
 const checkOnly = process.argv.includes('--check');
 const eventSchemaPath = join(root, 'schemas', 'events', 'browser-event.v1.schema.json');
 const batchSchemaPath = join(root, 'schemas', 'events', 'browser-event-batch.v1.schema.json');
+const eventV2SchemaPath = join(root, 'schemas', 'events', 'browser-event.v2.schema.json');
+const batchV2SchemaPath = join(root, 'schemas', 'events', 'browser-event-batch.v2.schema.json');
 const eventResponseSchemaPath = join(
   root,
   'schemas',
@@ -14,6 +16,14 @@ const eventResponseSchemaPath = join(
   'event-ingestion-response.v1.schema.json'
 );
 const eventOutputPath = join(root, 'packages', 'contracts', 'src', 'generated', 'browser-event.ts');
+const eventV2OutputPath = join(
+  root,
+  'packages',
+  'contracts',
+  'src',
+  'generated',
+  'browser-event-v2.ts'
+);
 const controlOutputPath = join(
   root,
   'packages',
@@ -44,13 +54,15 @@ function readSchema(path) {
 
 function typeFor(schema) {
   if (typeof schema.$ref === 'string') {
-    return schema.$ref
-      .split('/')
-      .at(-1)
-      .replace('.v1.schema.json', '')
-      .replaceAll('-', ' ')
-      .replace(/\b\w/g, (character) => character.toUpperCase())
-      .replaceAll(' ', '');
+    const fileName = schema.$ref.split('/').at(-1);
+    const version = fileName.match(/\.v(\d+)\.schema\.json$/)?.[1];
+    return (
+      fileName
+        .replace(/\.v\d+\.schema\.json$/, '')
+        .replaceAll('-', ' ')
+        .replace(/\b\w/g, (character) => character.toUpperCase())
+        .replaceAll(' ', '') + (version === '2' ? 'V2' : '')
+    );
   }
   if (Object.hasOwn(schema, 'const')) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
@@ -118,8 +130,11 @@ async function writeOrCheck(path, generated) {
 
 const eventSchema = readSchema(eventSchemaPath);
 const batchSchema = readSchema(batchSchemaPath);
+const eventV2Schema = readSchema(eventV2SchemaPath);
+const batchV2Schema = readSchema(batchV2SchemaPath);
 const eventResponseSchema = readSchema(eventResponseSchemaPath);
 const eventGenerated = `/* This file is generated from schemas/events/browser-event.v1.schema.json and browser-event-batch.v1.schema.json. DO NOT EDIT. */\n\nexport type BrowserEventKind = ${typeFor(eventSchema.properties.event_kind)};\n\n${eventInterfaceFor('BrowserEvent', eventSchema)}\n\n${eventInterfaceFor('BrowserEventBatch', batchSchema)}\n\n${eventInterfaceFor('EventIngestionResponse', eventResponseSchema)}\n`;
+const eventV2Generated = `/* This file is generated from schemas/events/browser-event.v2.schema.json and browser-event-batch.v2.schema.json. DO NOT EDIT. */\n\nexport type BrowserEventV2Kind = ${typeFor(eventV2Schema.properties.event_kind)};\n\n${eventInterfaceFor('BrowserEventV2', eventV2Schema)}\n\n${eventInterfaceFor('BrowserEventBatchV2', batchV2Schema)}\n`;
 
 const controlSchemas = Object.fromEntries(
   controlSchemaFiles.map((file) => {
@@ -144,5 +159,6 @@ const typedControlGenerated = controlGenerated.replace(
 );
 
 await writeOrCheck(eventOutputPath, eventGenerated);
+await writeOrCheck(eventV2OutputPath, eventV2Generated);
 await writeOrCheck(controlOutputPath, typedControlGenerated);
 if (checkOnly) console.log('Contract artifact drift check passed.');
