@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/events/browser-event.v1.schema.json",
+  "title": "BrowserEvent",
+  "description": "Strict, minimized browser event. Raw browser content and unknown fields are prohibited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "client_event_id",
+    "sequence_number",
+    "event_kind",
+    "occurred_at",
+    "capture_policy_version"
+  ],
+  "properties": {
+    "client_event_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sequence_number": { "type": "integer", "minimum": 0 },
+    "event_kind": {
+      "type": "string",
+      "enum": ["navigation", "meaningful_action", "visibility_change"]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "page_origin": {
+      "type": ["string", "null"],
+      "maxLength": 255,
+      "pattern": "^https?://[^/?#]+$"
+    },
+    "page_path_hash": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+    "page_title_redacted": { "type": ["string", "null"], "maxLength": 512 },
+    "accessibility_context_redacted": { "type": ["string", "null"], "maxLength": 12000 },
+    "context_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+    "capture_policy_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}

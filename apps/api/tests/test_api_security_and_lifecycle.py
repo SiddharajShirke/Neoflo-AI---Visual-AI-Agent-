@@ -1,0 +1,270 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
+from fastapi.testclient import TestClient
+from visual_ai_api.auth import CurrentUser
+from visual_ai_api.config import Settings
+from visual_ai_api.main import create_app
+from visual_ai_api.store import IngestResult, MemoryRepository
+
+USER_A = UUID("00000000-0000-0000-0000-0000000000a1")
+USER_B = UUID("00000000-0000-0000-0000-0000000000b2")
+
+
+class Verifier:
+    async def verify(self, token: str, settings: Settings) -> CurrentUser:
+        return CurrentUser(USER_A if token == "user-a" else USER_B)
+
+
+class RecordingRepository(MemoryRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ingest_route: object | None = None
+
+    async def ingest(self, *args: object, **kwargs: object) -> IngestResult:
+        self.ingest_route = args[1] if len(args) > 1 else kwargs.get("route")
+        return await super().ingest(*args, **kwargs)  # type: ignore[arg-type]
+
+
+def client(
+    repository: MemoryRepository | None = None, *, raise_server_exceptions: bool = True
+) -> TestClient:
+    value = "internal-" + "placeholder"
+    settings = Settings(
+        cors_origins=("http://localhost:3000",),
+        supabase_url="http://supabase.test",
+        supabase_secret_key=None,
+        jwt_issuer="http://supabase.test/auth/v1",
+        jwt_audience="authenticated",
+        internal_outbox_token=value,
+        max_request_bytes=262144,
+        max_events_per_batch=2,
+        max_title_length=8,
+        max_context_bytes=12,
+        max_future_seconds=300,
+        max_past_seconds=86400,
+        outbox_max_batch=1,
+        outbox_max_seconds=2.0,
+    )
+    return TestClient(
+        create_app(
+            settings=settings,
+            verifier=Verifier(),
+            repository=repository or MemoryRepository(),
+        ),
+        raise_server_exceptions=raise_server_exceptions,
+    )
+
+
+def auth(token: str = "user-a") -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def create_device(api: TestClient) -> str:
+    response = api.post(
+        "/api/v1/devices/register", headers=auth(), json={"installation_id": "a" * 16}
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert isinstance(body, dict)
+    identifier = body.get("id")
+    assert isinstance(identifier, str)
+    return identifier
+
+
+def create_monitoring_consent(api: TestClient, device_id: str, scope: str = "monitoring") -> str:
+    response = api.post(
+        "/api/v1/consents",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "scope": scope,
+            "policy_version": "v1",
+            "granted": True,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert isinstance(body, dict)
+    identifier = body.get("id")
+    assert isinstance(identifier, str)
+    return identifier
+
+
+def test_terminal_session_deletion_is_asynchronous_and_idempotent() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    response = api.post(
+        "/api/v1/sessions",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "monitoring_consent_id": consent_id,
+            "capture_policy_version": "v1",
+            "started_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    session_id = response.json()["id"]
+    assert api.post(f"/api/v1/sessions/{session_id}/complete", headers=auth()).status_code == 200
+    first = api.delete(f"/api/v1/sessions/{session_id}", headers=auth())
+    second = api.delete(f"/api/v1/sessions/{session_id}", headers=auth())
+    assert first.status_code == second.status_code == 202
+    assert first.json()["deletion_request_id"] == second.json()["deletion_request_id"]
+    assert api.get(f"/api/v1/sessions/{session_id}", headers=auth()).status_code == 200
+
+
+def test_valid_screenshot_consent_is_linked_but_capture_is_disabled() -> None:
+    api = client()
+    device_id = create_device(api)
+    monitoring = create_monitoring_consent(api, device_id)
+    screenshots = create_monitoring_consent(api, device_id, "screenshots")
+    response = api.post(
+        "/api/v1/sessions",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "monitoring_consent_id": monitoring,
+            "screenshot_consent_id": screenshots,
+            "capture_policy_version": "v1",
+            "started_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["screenshot_capture"] == "not_implemented"
+
+
+def test_cross_user_session_access_returns_safe_not_found() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    session = api.post(
+        "/api/v1/sessions",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "monitoring_consent_id": consent_id,
+            "capture_policy_version": "v1",
+            "started_at": datetime.now(UTC).isoformat(),
+        },
+    ).json()["id"]
+    response = api.get(f"/api/v1/sessions/{session}", headers=auth("user-b"))
+    assert response.status_code == 404
+
+
+def test_event_batch_requires_recording_session_and_idempotency_key() -> None:
+    repository = RecordingRepository()
+    api = client(repository)
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    session_id = api.post(
+        "/api/v1/sessions",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "monitoring_consent_id": consent_id,
+            "capture_policy_version": "v1",
+            "started_at": datetime.now(UTC).isoformat(),
+        },
+    ).json()["id"]
+    body = {
+        "device_id": device_id,
+        "session_id": session_id,
+        "events": [
+            {
+                "client_event_id": "event-1",
+                "sequence_number": 1,
+                "event_kind": "navigation",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "capture_policy_version": "v1",
+            }
+        ],
+    }
+    missing_key = api.post("/api/v1/events/batch", headers=auth(), json=body)
+    assert (missing_key.status_code, missing_key.json()["error"]["code"]) == (
+        400,
+        "idempotency_key_required",
+    )
+    response = api.post(
+        "/api/v1/events/batch", headers={**auth(), "Idempotency-Key": "batch-1"}, json=body
+    )
+    assert response.status_code == 202
+    assert response.json() == {"accepted_count": 1, "duplicate_count": 0}
+    retry = api.post(
+        "/api/v1/events/batch", headers={**auth(), "Idempotency-Key": "batch-1"}, json=body
+    )
+    assert retry.status_code == 202
+    assert retry.json() == response.json()
+    body["events"][0]["client_event_id"] = "event-2"
+    conflict = api.post(
+        "/api/v1/events/batch", headers={**auth(), "Idempotency-Key": "batch-1"}, json=body
+    )
+    assert (conflict.status_code, conflict.json()["error"]["code"]) == (
+        409,
+        "idempotency_key_reused",
+    )
+    assert repository.ingest_route == "/api/v1/events/batch"
+
+
+def test_event_batch_rejects_idempotency_keys_longer_than_128_characters() -> None:
+    response = client().post(
+        "/api/v1/events/batch",
+        headers={**auth(), "Idempotency-Key": "x" * 129},
+        json={
+            "device_id": "00000000-0000-0000-0000-0000000000a1",
+            "session_id": "00000000-0000-0000-0000-0000000000b2",
+            "events": [
+                {
+                    "client_event_id": "event-1",
+                    "sequence_number": 1,
+                    "event_kind": "navigation",
+                    "occurred_at": datetime.now(UTC).isoformat(),
+                    "capture_policy_version": "v1",
+                }
+            ],
+        },
+    )
+
+    assert (response.status_code, response.json()["error"]["code"]) == (
+        400,
+        "invalid_idempotency_key",
+    )
+
+
+def test_event_batch_maps_repository_conflict_to_409() -> None:
+    class ConflictRepository(MemoryRepository):
+        async def ingest(self, *args: object, **kwargs: object) -> IngestResult:
+            return IngestResult("conflict", None, None, None)
+
+    api = client(ConflictRepository(), raise_server_exceptions=False)
+    response = api.post(
+        "/api/v1/events/batch",
+        headers={**auth(), "Idempotency-Key": "key-1"},
+        json={
+            "device_id": "00000000-0000-0000-0000-0000000000a1",
+            "session_id": "00000000-0000-0000-0000-0000000000b2",
+            "events": [
+                {
+                    "client_event_id": "event-1",
+                    "sequence_number": 1,
+                    "event_kind": "navigation",
+                    "occurred_at": datetime.now(UTC).isoformat(),
+                    "capture_policy_version": "v1",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "idempotency_key_reused"
+
+
+def test_internal_endpoint_requires_constant_time_separate_credential() -> None:
+    api = client()
+    assert api.post("/api/v1/internal/outbox/publish").status_code == 403
+    response = api.post(
+        "/api/v1/internal/outbox/publish",
+        headers={"X-Internal-Outbox-Token": "internal-" + "placeholder"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"claimed_count": 0, "published_count": 0, "pending_count": 0}

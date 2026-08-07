@@ -46,21 +46,37 @@ EXPECTED_CI_VENV_COMMANDS = (
 
 
 class PythonToolingConfigTests(unittest.TestCase):
-    def test_projects_pin_python_to_3_11_9(self) -> None:
+    def test_projects_support_only_python_3_11(self) -> None:
         for project_file in PROJECT_FILES:
             with self.subTest(project_file=project_file.relative_to(REPOSITORY_ROOT)):
                 self.assertIn(
-                    'requires-python = "==3.11.9"', project_file.read_text(encoding="utf-8")
+                    'requires-python = ">=3.11,<3.12"',
+                    project_file.read_text(encoding="utf-8"),
                 )
 
-    def test_root_config_removes_uv_workspace_sections(self) -> None:
-        for project_file in PROJECT_FILES:
-            with self.subTest(project_file=project_file.relative_to(REPOSITORY_ROOT)):
-                project_config = project_file.read_text(encoding="utf-8")
-                self.assertNotIn("[tool.uv", project_config)
-
+    def test_root_config_declares_python_workspace_members(self) -> None:
         root_config = PROJECT_FILES[0].read_text(encoding="utf-8")
-        self.assertNotIn("[dependency-groups]", root_config)
+        for member in (
+            '"apps/api"',
+            '"apps/worker"',
+            '"packages/python-shared"',
+        ):
+            with self.subTest(member=member):
+                self.assertIn(member, root_config)
+        self.assertIn('visual-ai-shared = { workspace = true }', root_config)
+
+    def test_api_runtime_dependencies_are_explicit(self) -> None:
+        api_config = PROJECT_FILES[1].read_text(encoding="utf-8")
+        for dependency in (
+            '"fastapi==0.115.11"',
+            '"uvicorn[standard]==0.34.0"',
+            '"pydantic==2.10.6"',
+            '"pydantic-settings==2.7.1"',
+            '"httpx==0.28.1"',
+            '"PyJWT[crypto]==2.10.1"',
+        ):
+            with self.subTest(dependency=dependency):
+                self.assertIn(dependency, api_config)
 
     def test_dev_requirements_are_exactly_pinned(self) -> None:
         requirements = (REPOSITORY_ROOT / "requirements-dev.txt").read_text(

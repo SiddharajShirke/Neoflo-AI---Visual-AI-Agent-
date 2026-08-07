@@ -32,7 +32,7 @@ values
   ('20000000-0000-0000-0000-0000000000c2', '00000000-0000-0000-0000-0000000000c2', '10000000-0000-0000-0000-0000000000c2', 'monitoring', 'test-v1', true);
 
 insert into public.monitoring_sessions (id, user_id, device_id, monitoring_consent_id, status, started_at, ended_at, capture_policy_version)
-values ('30000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-0000000000c1', '10000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-0000000000c1', 'stopped', now() - interval '1 minute', now(), 'test-v1');
+values ('30000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-0000000000c1', '10000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-0000000000c1', 'completed', now() - interval '1 minute', now(), 'test-v1');
 
 insert into public.browser_events (id, user_id, device_id, session_id, client_event_id, event_kind, occurred_at, capture_policy_version)
 values ('40000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-0000000000c1', '10000000-0000-0000-0000-0000000000c1', '30000000-0000-0000-0000-0000000000c1', 'test-event-idempotency', 'navigation', now(), 'test-v1');
@@ -44,7 +44,7 @@ select throws_ok(
   'device installation identifiers must meet the minimum length'
 );
 select throws_ok(
-  $$insert into public.monitoring_sessions (user_id, device_id, monitoring_consent_id, status, started_at, capture_policy_version) values ('00000000-0000-0000-0000-0000000000c1', '10000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-0000000000c1', 'stopped', now(), 'test-v1')$$,
+  $$insert into public.monitoring_sessions (user_id, device_id, monitoring_consent_id, status, started_at, capture_policy_version) values ('00000000-0000-0000-0000-0000000000c1', '10000000-0000-0000-0000-0000000000c1', '20000000-0000-0000-0000-0000000000c1', 'completed', now(), 'test-v1')$$,
   '23514',
   null,
   'stopped sessions require an end time'

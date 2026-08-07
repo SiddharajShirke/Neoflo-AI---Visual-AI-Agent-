@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/events/event-ingestion-response.v1.schema.json",
+  "title": "EventIngestionResponse",
+  "description": "Safe idempotent event-ingestion response metadata. It contains no browser content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accepted_count", "duplicate_count"],
+  "properties": {
+    "accepted_count": { "type": "integer", "minimum": 0 },
+    "duplicate_count": { "type": "integer", "minimum": 0 }
+  }
+}

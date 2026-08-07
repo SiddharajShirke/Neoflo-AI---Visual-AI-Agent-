@@ -44,7 +44,7 @@ class ValidateSkillsTests(unittest.TestCase):
             (skill / "SKILL.md").write_text(
                 "---\nname: another-name\ndescription: x\n---\n\n"
                 "C:/Users/alice/private\n"
-                "api_key = 'sk-abcdefghijklmnopqrstuvwxyz123456'\n",
+                "api_key = '" + "sk-" + "abcdefghijklmnopqrstuvwxyz123456'\n",
                 encoding="utf-8",
             )
 

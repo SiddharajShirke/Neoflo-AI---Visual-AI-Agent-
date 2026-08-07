@@ -3,3 +3,6 @@ line-length = 100
 
 [lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[lint.per-file-ignores]
+"apps/api/src/visual_ai_api/main.py" = ["B008"]

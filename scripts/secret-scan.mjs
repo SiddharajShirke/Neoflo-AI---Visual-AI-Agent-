@@ -1,53 +1,58 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
-const ignored = new Set([
+export const ignoredDirectories = new Set([
   '.git',
-  'node_modules',
   '.next',
-  '.wxt',
-  'dist',
-  '.venv',
   '.mypy_cache',
   '.pytest_cache',
+  '.python',
   '.ruff_cache',
   '.superpowers',
+  '.uv-cache',
+  '.venv',
+  '.wxt',
   '__pycache__',
-  'coverage'
+  'build',
+  'coverage',
+  'dist',
+  'node_modules'
 ]);
-const syntheticFixturePaths = new Set(['tests/test_validate_skills.py']);
+
 const patterns = [
   /(?:sk|rk|pk)_[A-Za-z0-9_-]{16,}/i,
   /(?:api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}/i,
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10}/
 ];
-const findings = [];
 
-function visit(directory) {
-  for (const entry of readdirSync(directory)) {
-    if (ignored.has(entry)) continue;
-    const path = join(directory, entry);
-    if (statSync(path).isDirectory()) {
-      visit(path);
-      continue;
+export function scanDirectory(root) {
+  const findings = [];
+
+  function visit(directory) {
+    for (const entry of readdirSync(directory)) {
+      if (ignoredDirectories.has(entry)) continue;
+      const path = resolve(directory, entry);
+      if (statSync(path).isDirectory()) {
+        visit(path);
+        continue;
+      }
+      const relativePath = relative(root, path).replaceAll('\\', '/');
+      if (entry.endsWith('.gitkeep')) continue;
+      const text = readFileSync(path, 'utf8');
+      if (patterns.some((pattern) => pattern.test(text))) findings.push(relativePath);
     }
-    const relativePath = relative(root, path).replaceAll('\\', '/');
-    if (
-      entry === '.env.example' ||
-      entry.endsWith('.gitkeep') ||
-      syntheticFixturePaths.has(relativePath)
-    ) {
-      continue;
-    }
-    const text = readFileSync(path, 'utf8');
-    if (patterns.some((pattern) => pattern.test(text))) findings.push(relativePath);
   }
+
+  visit(root);
+  return findings.sort();
 }
 
-visit(root);
-if (findings.length > 0) {
-  console.error(`Potential secrets found in: ${findings.join(', ')}`);
-  process.exit(1);
+if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
+  const findings = scanDirectory(process.cwd());
+  if (findings.length > 0) {
+    console.error(`Potential secrets found in: ${findings.join(', ')}`);
+    process.exit(1);
+  }
+  console.log('Secret scan passed: no suspicious tracked-file values found.');
 }
-console.log('Secret scan passed: no suspicious tracked-file values found.');
