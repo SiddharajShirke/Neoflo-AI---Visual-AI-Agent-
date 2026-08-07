@@ -40,7 +40,15 @@ export class MutationDeliveryEngine {
     this.delivering = true;
     try {
       const mutations = await this.database.getAll<PendingMutation>('pending_mutations');
-      for (const mutation of mutations.filter((item) => isDeliverable(item, now)))
+      const recovered = mutations.map((mutation) =>
+        mutation.state === 'delivering' ? { ...mutation, state: 'pending' as const } : mutation
+      );
+      await Promise.all(
+        recovered
+          .filter((mutation, index) => mutations[index]?.state === 'delivering')
+          .map((mutation) => this.database.put('pending_mutations', mutation))
+      );
+      for (const mutation of recovered.filter((item) => isDeliverable(item, now)))
         await this.deliverOne(mutation, now);
     } finally {
       this.delivering = false;

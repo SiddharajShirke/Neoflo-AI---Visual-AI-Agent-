@@ -165,4 +165,18 @@ describe('durable mutation delivery', () => {
     database.close();
   });
 
+  it('replays a mutation stranded as delivering after worker recovery with its original idempotency key', async () => {
+    const database = await openControlPlaneDatabase(`delivery-${crypto.randomUUID()}`);
+    const mutation = await queued(database, 'pause_session');
+    await database.put('pending_mutations', { ...mutation, state: 'delivering' });
+    const pauseSession = vi.fn().mockResolvedValue({ id: 'session-1', status: 'paused' });
+    const restartedEngine = new MutationDeliveryEngine(database, { pauseSession } as never);
+
+    await restartedEngine.deliverDue(new Date('2026-08-07T00:00:01.000Z'));
+
+    expect(pauseSession).toHaveBeenCalledTimes(1);
+    expect(pauseSession).toHaveBeenCalledWith('session-1', mutation.idempotency_key);
+    expect(await database.getAll('pending_mutations')).toEqual([]);
+    database.close();
+  });
 });
