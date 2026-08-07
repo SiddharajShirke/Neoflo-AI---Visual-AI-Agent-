@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from visual_ai_api.auth import CurrentUser
 from visual_ai_api.main import create_app
-from visual_ai_api.schemas import EventBatch, EventIngestionResponse
+from visual_ai_api.schemas import ApiErrorResponse, EventBatch, EventIngestionResponse
 from visual_ai_api.store import MemoryRepository
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -15,6 +18,11 @@ VALID_FIXTURE = ROOT / "schemas" / "events" / "fixtures" / "browser-event-batch.
 INVALID_FIXTURE = (
     ROOT / "schemas" / "events" / "fixtures" / "browser-event-batch.v1.invalid-sensitive-field.json"
 )
+
+
+class FixedVerifier:
+    async def verify(self, token: str, settings: object) -> CurrentUser:
+        return CurrentUser(UUID("00000000-0000-0000-0000-0000000000a1"))
 
 
 def test_shared_minimized_fixture_matches_python_and_canonical_event_schema() -> None:
@@ -70,3 +78,50 @@ def test_event_ingestion_response_is_strict_and_represented_in_openapi() -> None
     assert schema["paths"]["/api/v1/events/batch"]["post"]["responses"]["202"]["content"][
         "application/json"
     ]["schema"]["$ref"] == "#/components/schemas/EventIngestionResponse"
+
+
+def test_control_plane_openapi_uses_strict_typed_request_and_response_models() -> None:
+    schema = create_app(repository=MemoryRepository()).openapi()
+
+    consent_create = schema["paths"]["/api/v1/consents"]["post"]
+    assert consent_create["requestBody"]["content"]["application/json"]["schema"]["$ref"] == (
+        "#/components/schemas/ConsentCreateRequest"
+    )
+    assert consent_create["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] == (
+        "#/components/schemas/ConsentCreateResponse"
+    )
+    assert schema["components"]["schemas"]["ConsentCreateResponse"]["additionalProperties"] is False
+    for action in ("pause", "resume", "complete", "cancel"):
+        response_schema = schema["paths"][f"/api/v1/sessions/{{session_id}}/{action}"]["post"][
+            "responses"
+        ]["200"]["content"]["application/json"]["schema"]
+        assert response_schema["$ref"] == "#/components/schemas/SessionTransitionResponse"
+    assert "/api/v1/sessions/{session_id}/{action}" not in schema["paths"]
+
+
+def test_api_errors_use_the_canonical_strict_response_model() -> None:
+    response = ApiErrorResponse.model_validate(
+        {
+            "error": {
+                "code": "authentication_required",
+                "message": "Authentication is required.",
+                "request_id": "request-1",
+            }
+        }
+    )
+
+    assert response.error.code == "authentication_required"
+
+
+def test_invalid_control_plane_requests_return_the_canonical_error_envelope() -> None:
+    response = TestClient(
+        create_app(repository=MemoryRepository(), verifier=FixedVerifier())
+    ).post(
+        "/api/v1/consents",
+        headers={"Authorization": "Bearer user-a", "Idempotency-Key": "invalid-request"},
+        json={"scope": "monitoring"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "detail" not in response.json()
