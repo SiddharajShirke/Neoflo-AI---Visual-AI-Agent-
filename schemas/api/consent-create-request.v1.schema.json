@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/consent-create-request.v1.schema.json",
+  "title": "ConsentCreateRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "scope", "policy_version", "granted"],
+  "properties": {
+    "device_id": { "type": "string", "format": "uuid" },
+    "scope": {
+      "type": "string",
+      "enum": ["monitoring", "screenshots", "privacy_notice", "retention"]
+    },
+    "policy_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "granted": { "type": "boolean" }
+  }
+}

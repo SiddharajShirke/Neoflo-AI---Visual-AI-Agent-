@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/monitoring-session-list-response.v1.schema.json",
+  "title": "MonitoringSessionListResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessions"],
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "device_id", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "device_id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["recording", "paused", "completed", "cancelled"] }
+        }
+      }
+    }
+  }
+}

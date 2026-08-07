@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/monitoring-session-create-request.v1.schema.json",
+  "title": "MonitoringSessionCreateRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "monitoring_consent_id", "capture_policy_version", "started_at"],
+  "properties": {
+    "device_id": { "type": "string", "format": "uuid" },
+    "monitoring_consent_id": { "type": "string", "format": "uuid" },
+    "screenshot_consent_id": { "type": ["string", "null"], "format": "uuid" },
+    "capture_policy_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "started_at": { "type": "string", "format": "date-time" }
+  }
+}

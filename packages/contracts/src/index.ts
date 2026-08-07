@@ -10,12 +10,43 @@ export type {
   BrowserEventKind,
   EventIngestionResponse
 } from './generated/browser-event.js';
+export type {
+  ConsentCreateRequest,
+  ConsentCreateResponse,
+  ConsentListResponse,
+  DeletionRequestResponse,
+  DeviceListResponse,
+  DeviceRegisterRequest,
+  DeviceRegisterResponse,
+  ApiErrorResponse,
+  MonitoringSessionCreateRequest,
+  MonitoringSessionCreateResponse,
+  MonitoringSessionListResponse,
+  MonitoringSessionResponse,
+  SessionTransitionResponse
+} from './generated/control-plane.js';
+export {
+  isConsentCreateRequest,
+  isConsentCreateResponse,
+  isConsentListResponse,
+  isApiErrorResponse,
+  isDeletionRequestResponse,
+  isDeviceListResponse,
+  isDeviceRegisterRequest,
+  isDeviceRegisterResponse,
+  isMonitoringSessionCreateRequest,
+  isMonitoringSessionCreateResponse,
+  isMonitoringSessionListResponse,
+  isMonitoringSessionResponse,
+  isSessionTransitionResponse
+} from './generated/control-plane.js';
 
 /** Stable names and strict TypeScript validators for canonical JSON schemas. */
 export const schemaVersions = {
   healthResponse: 'v1',
   browserEvent: 'v1',
-  browserEventBatch: 'v1'
+  browserEventBatch: 'v1',
+  controlPlane: 'v1'
 } as const;
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

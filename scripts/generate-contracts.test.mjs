@@ -15,4 +15,10 @@ test('contract generation produces the deterministic browser event artifact', ()
   const contents = readFileSync(generated, 'utf8');
   assert.match(contents, /generated from schemas\/events/);
   assert.match(contents, /events: BrowserEvent\[\];/);
+
+  const controlGenerated = 'packages/contracts/src/generated/control-plane.ts';
+  assert.equal(existsSync(controlGenerated), true);
+  const controlContents = readFileSync(controlGenerated, 'utf8');
+  assert.match(controlContents, /DeviceRegisterRequest/);
+  assert.match(controlContents, /isMonitoringSessionCreateResponse/);
 });
