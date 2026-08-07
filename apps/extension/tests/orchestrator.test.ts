@@ -234,6 +234,95 @@ describe('control-plane orchestration', () => {
     database.close();
   });
 
+  it('projects queued control-plane successes before removing them and preserves the session on restart', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    const now = new Date('2026-08-07T00:00:00.000Z');
+    const api = {
+      registerDevice: vi.fn().mockResolvedValue({
+        id: '10000000-0000-0000-0000-0000000000a1',
+        status: 'active'
+      }),
+      createConsent: vi.fn().mockResolvedValue({
+        id: '20000000-0000-0000-0000-0000000000a1',
+        scope: 'monitoring',
+        granted: 'true'
+      }),
+      createSession: vi.fn().mockResolvedValue({
+        id: '30000000-0000-0000-0000-0000000000a1',
+        status: 'recording',
+        screenshot_capture: 'not_implemented'
+      }),
+      pauseSession: vi.fn().mockResolvedValue({
+        id: '30000000-0000-0000-0000-0000000000a1',
+        status: 'paused'
+      }),
+      resumeSession: vi.fn().mockResolvedValue({
+        id: '30000000-0000-0000-0000-0000000000a1',
+        status: 'recording'
+      }),
+      completeSession: vi.fn().mockResolvedValue({
+        id: '30000000-0000-0000-0000-0000000000a1',
+        status: 'completed'
+      }),
+      getSession: vi.fn().mockResolvedValue({
+        id: '30000000-0000-0000-0000-0000000000a1',
+        status: 'recording'
+      })
+    };
+    const orchestrator = new ControlPlaneOrchestrator(api as never, database);
+    await orchestrator.initialize(true);
+    const delivery = new MutationDeliveryEngine(database, api as never, {
+      onDelivered: (mutation, response) => orchestrator.applyDeliveredMutation(mutation, response)
+    });
+    const deliver = async (
+      type: Parameters<typeof createPendingMutation>[0],
+      payload: Record<string, unknown>
+    ) => {
+      const mutation = await createPendingMutation(type, payload, now);
+      await enqueueMutation(database, mutation);
+      await delivery.deliverDue(now);
+      expect(await database.get('pending_mutations', mutation.local_operation_id)).toBeUndefined();
+    };
+
+    await deliver('register_device', {
+      installation_id: 'installation-0001',
+      client_version: 'm3'
+    });
+    expect(await database.get('device_metadata', 'current')).toMatchObject({
+      device_id: '10000000-0000-0000-0000-0000000000a1'
+    });
+    await deliver('create_consent', {
+      device_id: '10000000-0000-0000-0000-0000000000a1',
+      scope: 'monitoring',
+      policy_version: 'm3-monitoring-v1',
+      granted: true
+    });
+    await deliver('create_session', {
+      device_id: '10000000-0000-0000-0000-0000000000a1',
+      monitoring_consent_id: '20000000-0000-0000-0000-0000000000a1',
+      screenshot_consent_id: null,
+      capture_policy_version: 'm3-capture-v1',
+      started_at: now.toISOString()
+    });
+    expect(orchestrator.snapshot()).toMatchObject({
+      kind: 'RECORDING',
+      sessionId: '30000000-0000-0000-0000-0000000000a1'
+    });
+    const restarted = new ControlPlaneOrchestrator(api as never, database);
+    await expect(restarted.initialize(true)).resolves.toMatchObject({
+      kind: 'RECORDING',
+      sessionId: '30000000-0000-0000-0000-0000000000a1'
+    });
+    await expect(restarted.start()).resolves.toBe(false);
+    await deliver('pause_session', { session_id: '30000000-0000-0000-0000-0000000000a1' });
+    expect(orchestrator.snapshot().kind).toBe('PAUSED');
+    await deliver('resume_session', { session_id: '30000000-0000-0000-0000-0000000000a1' });
+    expect(orchestrator.snapshot().kind).toBe('RECORDING');
+    await deliver('complete_session', { session_id: '30000000-0000-0000-0000-0000000000a1' });
+    expect(orchestrator.snapshot().kind).toBe('STOPPED');
+    database.close();
+  });
+
   it('recovers a no-auth restart as signed out and remote completion as stopped', async () => {
     const noAuth = new ControlPlaneOrchestrator(
       {} as never,

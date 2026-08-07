@@ -77,6 +77,10 @@ export default defineBackground(() => {
         void auth!.signOut();
         void orchestrator!.initialize(false);
       },
+      onDelivered: async (mutation, response) => {
+        await orchestrator!.applyDeliveredMutation(mutation, response);
+        await setIndicator(orchestrator!.snapshot().kind);
+      },
       onReconciled: (_sessionId, status) => {
         void setIndicator(
           status === 'recording' ? 'RECORDING' : status === 'paused' ? 'PAUSED' : 'STOPPED'

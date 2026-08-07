@@ -4,10 +4,16 @@ import type { ControlPlaneDatabase } from '../persistence/database.js';
 import {
   createPendingMutation,
   enqueueMutation,
-  type ControlPlaneMutationType
+  type ControlPlaneMutationType,
+  type PendingMutation
 } from '../queue/mutations.js';
 import { nextRetryDelayMs, shouldRetryStatus } from '../queue/retry.js';
-import { initialMonitoringState, reduceMonitoring, type MonitoringState } from './state-machine.js';
+import {
+  initialMonitoringState,
+  reduceMonitoring,
+  type MonitoringState,
+  type RemoteSessionStatus
+} from './state-machine.js';
 
 const CONSENT_POLICY_VERSION = 'm3-monitoring-v1';
 const CAPTURE_POLICY_VERSION = 'm3-capture-v1';
@@ -24,6 +30,35 @@ export class ControlPlaneOrchestrator {
 
   snapshot(): MonitoringState {
     return { ...this.state };
+  }
+
+  async applyDeliveredMutation(mutation: PendingMutation, response: unknown): Promise<void> {
+    if (
+      !response ||
+      typeof response !== 'object' ||
+      typeof (response as { id?: unknown }).id !== 'string'
+    )
+      throw new Error('invalid_delivery_response');
+    const id = (response as { id: string }).id;
+    if (mutation.operation_type === 'register_device') {
+      const installationId = mutation.payload.installation_id;
+      if (typeof installationId !== 'string') throw new Error('invalid_queue_payload');
+      await this.projectDevice(installationId, id);
+      this.state = reduceMonitoring(this.state, {
+        type: 'READY',
+        consentActive: Boolean(this.consentId)
+      });
+      return;
+    }
+    if (mutation.operation_type === 'create_consent') {
+      const granted = mutation.payload.granted;
+      if (typeof granted !== 'boolean') throw new Error('invalid_queue_payload');
+      await this.projectConsent(id, granted);
+      return;
+    }
+    const status = (response as { status?: unknown }).status;
+    if (!isRemoteSessionStatus(status)) throw new Error('invalid_delivery_response');
+    await this.projectSession(id, status);
   }
 
   async initialize(authenticated: boolean): Promise<MonitoringState> {
@@ -105,13 +140,8 @@ export class ControlPlaneOrchestrator {
       await this.deferIfTransient(mutation, error);
       return null;
     }
-    this.deviceId = response.id;
-    await this.database.put('device_metadata', {
-      id: 'current',
-      installation_id: installationId,
-      device_id: response.id
-    });
-    return response.id;
+    await this.projectDevice(installationId, response.id);
+    return this.deviceId;
   }
 
   async setMonitoringConsent(granted: boolean): Promise<boolean> {
@@ -130,16 +160,7 @@ export class ControlPlaneOrchestrator {
       await this.deferIfTransient(mutation, error);
       return false;
     }
-    this.consentId = granted ? response.id : null;
-    await this.database.put('extension_config', {
-      id: 'monitoring-consent',
-      consent_id: response.id,
-      device_id: this.deviceId,
-      policy_version: CONSENT_POLICY_VERSION,
-      granted,
-      verified_at: new Date().toISOString()
-    });
-    this.state = reduceMonitoring(this.state, { type: 'READY', consentActive: granted });
+    await this.projectConsent(response.id, granted);
     return true;
   }
 
@@ -162,17 +183,7 @@ export class ControlPlaneOrchestrator {
       await this.deferIfTransient(mutation, error);
       return false;
     }
-    this.state = reduceMonitoring(this.state, {
-      type: 'REMOTE_CONFIRMED',
-      status: response.status,
-      sessionId: response.id
-    });
-    await this.database.put('monitoring_sessions', {
-      id: 'current',
-      session_id: response.id,
-      status: response.status,
-      device_id: this.deviceId
-    });
+    await this.projectSession(response.id, response.status);
     return true;
   }
 
@@ -238,17 +249,7 @@ export class ControlPlaneOrchestrator {
       await this.deferIfTransient(mutation, error);
       return false;
     }
-    this.state = reduceMonitoring(this.state, {
-      type: 'REMOTE_CONFIRMED',
-      status: response.status,
-      sessionId: response.id
-    });
-    await this.database.put('monitoring_sessions', {
-      id: 'current',
-      session_id: response.id,
-      status: response.status,
-      device_id: this.deviceId
-    });
+    await this.projectSession(response.id, response.status);
     return true;
   }
 
@@ -274,4 +275,46 @@ export class ControlPlaneOrchestrator {
         code: error instanceof ApiClientError ? error.code : 'network_error'
       });
   }
+
+  private async projectDevice(installationId: string, deviceId: string): Promise<void> {
+    this.deviceId = deviceId;
+    await this.database.put('device_metadata', {
+      id: 'current',
+      installation_id: installationId,
+      device_id: deviceId
+    });
+  }
+
+  private async projectConsent(consentId: string, granted: boolean): Promise<void> {
+    this.consentId = granted ? consentId : null;
+    await this.database.put('extension_config', {
+      id: 'monitoring-consent',
+      consent_id: consentId,
+      device_id: this.deviceId,
+      policy_version: CONSENT_POLICY_VERSION,
+      granted,
+      verified_at: new Date().toISOString()
+    });
+    this.state = reduceMonitoring(this.state, { type: 'READY', consentActive: granted });
+  }
+
+  private async projectSession(sessionId: string, status: RemoteSessionStatus): Promise<void> {
+    this.state = reduceMonitoring(this.state, {
+      type: 'REMOTE_CONFIRMED',
+      status,
+      sessionId
+    });
+    await this.database.put('monitoring_sessions', {
+      id: 'current',
+      session_id: sessionId,
+      status,
+      device_id: this.deviceId
+    });
+  }
+}
+
+function isRemoteSessionStatus(value: unknown): value is RemoteSessionStatus {
+  return (
+    value === 'recording' || value === 'paused' || value === 'completed' || value === 'cancelled'
+  );
 }

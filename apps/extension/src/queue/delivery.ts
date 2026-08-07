@@ -7,6 +7,7 @@ type TransitionStatus = 'recording' | 'paused' | 'completed';
 
 export interface DeliveryHooks {
   onAuthRequired?: () => void;
+  onDelivered?: (mutation: PendingMutation, response: unknown) => Promise<void>;
   onReconciled?: (sessionId: string, status: TransitionStatus) => void;
   onSyncError?: (code: string) => void;
   random?: () => number;
@@ -49,7 +50,8 @@ export class MutationDeliveryEngine {
   private async deliverOne(mutation: PendingMutation, now: Date): Promise<void> {
     await this.database.put('pending_mutations', { ...mutation, state: 'delivering' });
     try {
-      await this.dispatch(mutation);
+      const response = await this.dispatch(mutation);
+      await this.hooks.onDelivered?.(mutation, response);
       await this.confirm(mutation);
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 401) {
@@ -83,30 +85,23 @@ export class MutationDeliveryEngine {
     }
   }
 
-  private async dispatch(mutation: PendingMutation): Promise<void> {
+  private async dispatch(mutation: PendingMutation): Promise<unknown> {
     const payload = mutation.payload;
     switch (mutation.operation_type) {
       case 'register_device':
-        await this.api.registerDevice(payload as never, mutation.idempotency_key);
-        return;
+        return this.api.registerDevice(payload as never, mutation.idempotency_key);
       case 'create_consent':
-        await this.api.createConsent(payload as never, mutation.idempotency_key);
-        return;
+        return this.api.createConsent(payload as never, mutation.idempotency_key);
       case 'create_session':
-        await this.api.createSession(payload as never, mutation.idempotency_key);
-        return;
+        return this.api.createSession(payload as never, mutation.idempotency_key);
       case 'pause_session':
-        await this.api.pauseSession(sessionId(payload), mutation.idempotency_key);
-        return;
+        return this.api.pauseSession(sessionId(payload), mutation.idempotency_key);
       case 'resume_session':
-        await this.api.resumeSession(sessionId(payload), mutation.idempotency_key);
-        return;
+        return this.api.resumeSession(sessionId(payload), mutation.idempotency_key);
       case 'complete_session':
-        await this.api.completeSession(sessionId(payload), mutation.idempotency_key);
-        return;
+        return this.api.completeSession(sessionId(payload), mutation.idempotency_key);
       case 'cancel_session':
-        await this.api.cancelSession(sessionId(payload), mutation.idempotency_key);
-        return;
+        return this.api.cancelSession(sessionId(payload), mutation.idempotency_key);
     }
   }
 
