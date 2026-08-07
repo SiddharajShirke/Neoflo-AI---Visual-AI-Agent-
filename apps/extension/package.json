@@ -8,7 +8,12 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@visual-ai/contracts": "workspace:*",
+    "@supabase/supabase-js": "^2.112.2"
+  },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "wxt": "0.19.12"
   }
 }
