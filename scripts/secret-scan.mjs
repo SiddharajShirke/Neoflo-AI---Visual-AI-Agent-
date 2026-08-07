@@ -26,6 +26,28 @@ const patterns = [
   /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10}/
 ];
 
+function isPhoenixAccessTokenKeyMap(text, match) {
+  const prefixLength = 'access_'.length;
+  const start = Math.max(0, match.index - prefixLength);
+  const end = Math.min(text.length, match.index + match[0].length + 1);
+  return /^access_token\s*:\s*['"]access_token['"]$/i.test(text.slice(start, end));
+}
+
+function isSupabaseRealtimeAuthWarning(text, match) {
+  const staticSpan = 'Failed to set initial Realtime auth token:",h)),this.rest=new Hs(new URL(';
+  const start = text.lastIndexOf(staticSpan, match.index);
+  return start !== -1 && start + staticSpan.length === match.index + match[0].length;
+}
+
+function hasSuspiciousValue(text) {
+  return patterns.some((pattern) =>
+    Array.from(text.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))).some(
+      (match) =>
+        !isPhoenixAccessTokenKeyMap(text, match) && !isSupabaseRealtimeAuthWarning(text, match)
+    )
+  );
+}
+
 export function scanDirectory(root) {
   const findings = [];
 
@@ -40,7 +62,7 @@ export function scanDirectory(root) {
       const relativePath = relative(root, path).replaceAll('\\', '/');
       if (entry.endsWith('.gitkeep')) continue;
       const text = readFileSync(path, 'utf8');
-      if (patterns.some((pattern) => pattern.test(text))) findings.push(relativePath);
+      if (hasSuspiciousValue(text)) findings.push(relativePath);
     }
   }
 

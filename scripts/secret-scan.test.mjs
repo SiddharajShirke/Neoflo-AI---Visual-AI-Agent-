@@ -32,6 +32,53 @@ test('detects a fake secret in a source file', () => {
   }
 });
 
+test('does not treat the Phoenix access-token protocol key map as a secret', () => {
+  const tree = fixture();
+  try {
+    tree.write('apps/extension/.output/chrome-mv3/background.js', 'access_token:"access_token"');
+    assert.deepEqual(scanDirectory(tree.root), []);
+  } finally {
+    tree.dispose();
+  }
+});
+
+test('does not treat the Supabase Realtime authentication warning as a secret', () => {
+  const tree = fixture();
+  try {
+    tree.write(
+      'apps/extension/.output/chrome-mv3/background.js',
+      'console.warn("Failed to set initial Realtime auth token:",h)),this.rest=new Hs(new URL('
+    );
+    assert.deepEqual(scanDirectory(tree.root), []);
+  } finally {
+    tree.dispose();
+  }
+});
+
+test('still detects real secret patterns adjacent to the Supabase Realtime warning', () => {
+  const tree = fixture();
+  try {
+    const tokenLabel = ['to', 'ken'].join('');
+    const warning = `console.warn("Failed to set initial Realtime auth ${tokenLabel}:",h),"rest/v1",i).href; `;
+    tree.write('apps/extension/.output/chrome-mv3/sk.js', `${warning}sk_${'x'.repeat(20)}`);
+    tree.write(
+      'apps/extension/.output/chrome-mv3/jwt.js',
+      `${warning}eyJ${'a'.repeat(12)}.${'b'.repeat(12)}.${'c'.repeat(12)}`
+    );
+    tree.write(
+      'apps/extension/.output/chrome-mv3/api-key.js',
+      `${warning}api_key="${'x'.repeat(16)}"`
+    );
+    assert.deepEqual(scanDirectory(tree.root), [
+      'apps/extension/.output/chrome-mv3/api-key.js',
+      'apps/extension/.output/chrome-mv3/jwt.js',
+      'apps/extension/.output/chrome-mv3/sk.js'
+    ]);
+  } finally {
+    tree.dispose();
+  }
+});
+
 test('ignores generated runtime and dependency files', () => {
   const tree = fixture();
   try {
