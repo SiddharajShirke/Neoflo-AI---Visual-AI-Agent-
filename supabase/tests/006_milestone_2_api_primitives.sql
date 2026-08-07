@@ -1,6 +1,6 @@
 begin;
 set local search_path = extensions, public, auth, pg_catalog;
-select plan(23);
+select plan(35);
 
 select has_table('public', 'event_outbox', 'event outbox exists');
 select has_table('public', 'api_idempotency_records', 'idempotency table exists');
@@ -103,6 +103,90 @@ select throws_ok(
   'P0001',
   'invalid session transition',
   'completed sessions cannot transition again'
+);
+
+select has_index(
+  'public', 'consent_records', 'consent_records_one_active_grant_idx',
+  'only one active consent grant may exist per owner, device, and scope'
+);
+select ok(has_function_privilege(
+  'service_role',
+  'public.create_consent_idempotent(uuid, text, uuid, public.consent_scope, text, boolean, text, text)',
+  'execute'
+), 'service role may create an idempotent consent');
+select ok(not has_function_privilege(
+  'authenticated',
+  'public.create_consent_idempotent(uuid, text, uuid, public.consent_scope, text, boolean, text, text)',
+  'execute'
+), 'authenticated users cannot invoke the consent idempotency RPC');
+select ok(has_function_privilege(
+  'service_role',
+  'public.create_monitoring_session_idempotent(uuid, text, uuid, uuid, uuid, text, timestamptz, text, text)',
+  'execute'
+), 'service role may create an idempotent monitoring session');
+select ok(not has_function_privilege(
+  'authenticated',
+  'public.create_monitoring_session_idempotent(uuid, text, uuid, uuid, uuid, text, timestamptz, text, text)',
+  'execute'
+), 'authenticated users cannot invoke the session idempotency RPC');
+select ok(has_function_privilege(
+  'service_role',
+  'public.transition_monitoring_session_idempotent(uuid, text, uuid, public.monitoring_session_status, text, text)',
+  'execute'
+), 'service role may make an idempotent session transition');
+select ok(not has_function_privilege(
+  'authenticated',
+  'public.transition_monitoring_session_idempotent(uuid, text, uuid, public.monitoring_session_status, text, text)',
+  'execute'
+), 'authenticated users cannot invoke the transition idempotency RPC');
+
+select is(
+  (select outcome from public.create_consent_idempotent(
+    '00000000-0000-0000-0000-0000000000f1', '/api/v1/consents',
+    '10000000-0000-0000-0000-0000000000f1', 'privacy_notice', 'test-v1', true,
+    'control-consent-replay', repeat('a', 64)
+  )),
+  'created',
+  'a first control-plane consent request is created'
+);
+select is(
+  (select outcome from public.create_consent_idempotent(
+    '00000000-0000-0000-0000-0000000000f1', '/api/v1/consents',
+    '10000000-0000-0000-0000-0000000000f1', 'privacy_notice', 'test-v1', true,
+    'control-consent-replay', repeat('a', 64)
+  )),
+  'completed',
+  'a timeout-after-commit replay returns the saved consent response'
+);
+select is(
+  (select outcome from public.create_consent_idempotent(
+    '00000000-0000-0000-0000-0000000000f1', '/api/v1/consents',
+    '10000000-0000-0000-0000-0000000000f1', 'privacy_notice', 'test-v1', true,
+    'control-consent-replay', repeat('b', 64)
+  )),
+  'conflict',
+  'a reused control-plane key with a changed request hash conflicts'
+);
+select is(
+  (select outcome from public.create_consent_idempotent(
+    '00000000-0000-0000-0000-0000000000f1', '/api/v1/consents',
+    '10000000-0000-0000-0000-0000000000f1', 'monitoring', 'test-v2', false,
+    'control-consent-withdrawal', repeat('c', 64)
+  )),
+  'created',
+  'withdrawal appends a consent audit record'
+);
+select throws_ok(
+  $$insert into public.monitoring_sessions(
+      user_id, device_id, monitoring_consent_id, started_at, capture_policy_version
+    ) values (
+      '00000000-0000-0000-0000-0000000000f1',
+      '10000000-0000-0000-0000-0000000000f1',
+      '20000000-0000-0000-0000-0000000000f1', now(), 'test-v1'
+    )$$,
+  '23514',
+  'monitoring consent must be active for this user',
+  'a withdrawn monitoring consent cannot create a later session'
 );
 
 select * from finish();
