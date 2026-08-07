@@ -34,8 +34,9 @@ function isPhoenixAccessTokenKeyMap(text, match) {
 }
 
 function isSupabaseRealtimeAuthWarning(text, match) {
-  const context = text.slice(Math.max(0, match.index - 64), match.index + match[0].length);
-  return context.includes('Failed to set initial Realtime auth token:');
+  const staticSpan = 'Failed to set initial Realtime auth token:",h)),this.rest=new Hs(new URL(';
+  const start = text.lastIndexOf(staticSpan, match.index);
+  return start !== -1 && start + staticSpan.length === match.index + match[0].length;
 }
 
 function hasSuspiciousValue(text) {
