@@ -1,6 +1,6 @@
 begin;
 set local search_path = extensions, public, auth, pg_catalog;
-select plan(20);
+select plan(23);
 
 select has_table('public', 'event_outbox', 'event outbox exists');
 select has_table('public', 'api_idempotency_records', 'idempotency table exists');
@@ -16,9 +16,25 @@ select ok(not has_function_privilege('authenticated', 'public.publish_event_outb
   'authenticated role cannot publish outbox');
 select ok(not has_table_privilege('authenticated', 'public.event_outbox', 'select'),
   'authenticated role cannot read outbox');
-select ok(position('search_path = public, pgmq, pg_catalog' in pg_get_functiondef(
-  'public.publish_event_outbox(integer)'::regprocedure)) > 0,
-  'outbox function has an explicit secure search path');
+select ok(
+  (select 'search_path=pg_catalog' = any(coalesce(proconfig, array[]::text[]))
+   from pg_proc
+   where oid = 'public.publish_event_outbox(integer)'::regprocedure),
+  'outbox function has a minimal pg_catalog-only search path'
+);
+select ok(
+  (select prosecdef from pg_proc
+   where oid = 'public.publish_event_outbox(integer)'::regprocedure),
+  'outbox function remains security definer'
+);
+select is(
+  (select pg_get_userbyid(proowner) from pg_proc
+   where oid = 'public.publish_event_outbox(integer)'::regprocedure),
+  'postgres',
+  'outbox function remains owned by postgres'
+);
+select ok(not has_function_privilege('anon', 'public.publish_event_outbox(integer)', 'execute'),
+  'anonymous users cannot publish outbox');
 select ok((select count(*) from public.monitoring_sessions where status::text = 'expired') = 0,
   'clean disposable migration contains no expired sessions');
 
