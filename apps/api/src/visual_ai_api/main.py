@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
@@ -17,15 +18,26 @@ from starlette.responses import Response
 
 from .auth import CurrentUser, JwtVerifier, TokenVerifier, bearer_token
 from .config import Settings
-from .errors import ApiError, api_error_handler
+from .errors import ApiError, api_error_handler, request_validation_error_handler
 from .postgres import PostgrestRepository
 from .rate_limits import InMemoryRateLimiter, RateLimiter
 from .schemas import (
+    ApiErrorResponse,
     ConsentCreate,
+    ConsentCreateResponse,
+    ConsentListResponse,
+    DeletionRequestResponse,
+    DeviceListResponse,
     DeviceRegister,
+    DeviceRegisterResponse,
     EventBatch,
     EventIngestionResponse,
+    MonitoringSessionCreateResponse,
+    MonitoringSessionListResponse,
+    MonitoringSessionResponse,
     SessionCreate,
+    SessionTransitionResponse,
+    canonical_request_hash,
     event_batch_request_hash,
 )
 from .store import Repository
@@ -54,8 +66,14 @@ def create_app(
         app.state.repository = repository
         yield
 
-    app = FastAPI(title="Visual AI Browser Agent API", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Visual AI Browser Agent API",
+        version="0.2.0",
+        lifespan=lifespan,
+        responses={422: {"model": ApiErrorResponse}},
+    )
     app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -105,6 +123,11 @@ def create_app(
             raise ApiError(400, "invalid_idempotency_key", "The idempotency key is invalid.")
         return value
 
+    def required_idempotency_key(value: str | None = Depends(idempotency_key)) -> str:
+        if value is None:
+            raise ApiError(400, "idempotency_key_required", "An idempotency key is required.")
+        return value
+
     @app.get("/health/live", tags=["health"])
     async def live() -> dict[str, str]:
         return {"status": "ok", "service": "api"}
@@ -119,7 +142,7 @@ def create_app(
             raise ApiError(503, "database_unavailable", "The service is unavailable.") from error
         return {"status": "ok", "service": "api"}
 
-    @app.get("/api/v1/devices", tags=["devices"])
+    @app.get("/api/v1/devices", tags=["devices"], response_model=DeviceListResponse)
     async def list_devices(user: CurrentUser = Depends(current_user)) -> dict[str, list[object]]:
         devices = await repository.list_devices(user.id)
         return {
@@ -129,7 +152,12 @@ def create_app(
             ]
         }
 
-    @app.post("/api/v1/devices/register", status_code=201, tags=["devices"])
+    @app.post(
+        "/api/v1/devices/register",
+        status_code=201,
+        tags=["devices"],
+        response_model=DeviceRegisterResponse,
+    )
     async def register_device(
         payload: DeviceRegister,
         user: CurrentUser = Depends(current_user),
@@ -140,25 +168,44 @@ def create_app(
         device = await repository.register_device(user.id, payload)
         return {"id": str(device.id), "status": device.status}
 
-    @app.post("/api/v1/devices/{device_id}/revoke", tags=["devices"])
+    @app.post(
+        "/api/v1/devices/{device_id}/revoke",
+        tags=["devices"],
+        response_model=DeviceRegisterResponse,
+    )
     async def revoke_device(
         device_id: UUID, user: CurrentUser = Depends(current_user)
     ) -> dict[str, str]:
         device = await repository.revoke_device(user.id, device_id)
         return {"id": str(device.id), "status": device.status}
 
-    @app.post("/api/v1/consents", status_code=201, tags=["consents"])
+    @app.post(
+        "/api/v1/consents",
+        status_code=201,
+        tags=["consents"],
+        response_model=ConsentCreateResponse,
+    )
     async def create_consent(
-        payload: ConsentCreate, user: CurrentUser = Depends(current_user)
+        payload: ConsentCreate,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
     ) -> dict[str, str]:
-        consent = await repository.create_consent(user.id, payload)
-        return {
-            "id": str(consent.id),
-            "scope": consent.scope,
-            "granted": str(consent.granted).lower(),
-        }
+        result = await repository.create_consent_idempotent(
+            user.id,
+            "/api/v1/consents",
+            payload,
+            key,
+            canonical_request_hash(payload),
+        )
+        if result.outcome == "conflict":
+            raise ApiError(409, "idempotency_key_reused", "The idempotency key was reused.")
+        if result.outcome == "in_progress":
+            raise ApiError(409, "idempotency_request_in_progress", "Retry the request shortly.")
+        if result.response_status != 201 or result.response_metadata is None:
+            raise ApiError(503, "database_unavailable", "The service is unavailable.")
+        return result.response_metadata
 
-    @app.get("/api/v1/consents", tags=["consents"])
+    @app.get("/api/v1/consents", tags=["consents"], response_model=ConsentListResponse)
     async def list_consents(user: CurrentUser = Depends(current_user)) -> dict[str, list[object]]:
         consents = await repository.list_consents(user.id)
         return {
@@ -173,20 +220,42 @@ def create_app(
             ]
         }
 
-    @app.post("/api/v1/sessions", status_code=201, tags=["sessions"])
+    @app.post(
+        "/api/v1/sessions",
+        status_code=201,
+        tags=["sessions"],
+        response_model=MonitoringSessionCreateResponse,
+    )
     async def create_session(
-        payload: SessionCreate, user: CurrentUser = Depends(current_user)
+        payload: SessionCreate,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
     ) -> dict[str, str]:
         if not limiter.allow(f"session:{user.id}", 20, 60):
             raise ApiError(429, "rate_limited", "Too many requests.")
-        session = await repository.create_session(user.id, payload)
+        result = await repository.create_session_idempotent(
+            user.id,
+            "/api/v1/sessions",
+            payload,
+            key,
+            canonical_request_hash(payload),
+        )
+        if result.outcome == "conflict":
+            raise ApiError(409, "idempotency_key_reused", "The idempotency key was reused.")
+        if result.outcome == "in_progress":
+            raise ApiError(409, "idempotency_request_in_progress", "Retry the request shortly.")
+        if result.response_status != 201 or result.response_metadata is None:
+            raise ApiError(503, "database_unavailable", "The service is unavailable.")
         return {
-            "id": str(session.id),
-            "status": session.status,
+            **result.response_metadata,
             "screenshot_capture": "not_implemented",
         }
 
-    @app.get("/api/v1/sessions", tags=["sessions"])
+    @app.get(
+        "/api/v1/sessions",
+        tags=["sessions"],
+        response_model=MonitoringSessionListResponse,
+    )
     async def list_sessions(user: CurrentUser = Depends(current_user)) -> dict[str, list[object]]:
         sessions = await repository.list_sessions(user.id)
         return {
@@ -200,23 +269,94 @@ def create_app(
             ]
         }
 
-    @app.get("/api/v1/sessions/{session_id}", tags=["sessions"])
+    @app.get(
+        "/api/v1/sessions/{session_id}",
+        tags=["sessions"],
+        response_model=MonitoringSessionResponse,
+    )
     async def get_session(
         session_id: UUID, user: CurrentUser = Depends(current_user)
     ) -> dict[str, str]:
         session = await repository.owned_session(user.id, session_id)
         return {"id": str(session.id), "status": session.status}
 
-    @app.post("/api/v1/sessions/{session_id}/{action}", tags=["sessions"])
     async def transition_session(
-        session_id: UUID, action: str, user: CurrentUser = Depends(current_user)
+        session_id: UUID,
+        action: str,
+        user: CurrentUser,
+        key: str,
     ) -> dict[str, str]:
-        if action not in {"pause", "resume", "complete", "cancel"}:
-            raise ApiError(404, "resource_not_found", "The resource was not found.")
-        session = await repository.transition(user.id, session_id, action)
-        return {"id": str(session.id), "status": session.status}
+        route = f"/api/v1/sessions/{session_id}/{action}"
+        result = await repository.transition_idempotent(
+            user.id,
+            route,
+            session_id,
+            action,
+            key,
+            canonical_request_hash({}),
+        )
+        if result.outcome == "conflict":
+            raise ApiError(409, "idempotency_key_reused", "The idempotency key was reused.")
+        if result.outcome == "in_progress":
+            raise ApiError(409, "idempotency_request_in_progress", "Retry the request shortly.")
+        if result.response_status != 200 or result.response_metadata is None:
+            raise ApiError(503, "database_unavailable", "The service is unavailable.")
+        return result.response_metadata
 
-    @app.delete("/api/v1/sessions/{session_id}", status_code=202, tags=["sessions"])
+    @app.post(
+        "/api/v1/sessions/{session_id}/pause",
+        tags=["sessions"],
+        response_model=SessionTransitionResponse,
+    )
+    async def pause_session(
+        session_id: UUID,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
+    ) -> dict[str, str]:
+        return await transition_session(session_id, "pause", user, key)
+
+    @app.post(
+        "/api/v1/sessions/{session_id}/resume",
+        tags=["sessions"],
+        response_model=SessionTransitionResponse,
+    )
+    async def resume_session(
+        session_id: UUID,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
+    ) -> dict[str, str]:
+        return await transition_session(session_id, "resume", user, key)
+
+    @app.post(
+        "/api/v1/sessions/{session_id}/complete",
+        tags=["sessions"],
+        response_model=SessionTransitionResponse,
+    )
+    async def complete_session(
+        session_id: UUID,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
+    ) -> dict[str, str]:
+        return await transition_session(session_id, "complete", user, key)
+
+    @app.post(
+        "/api/v1/sessions/{session_id}/cancel",
+        tags=["sessions"],
+        response_model=SessionTransitionResponse,
+    )
+    async def cancel_session(
+        session_id: UUID,
+        user: CurrentUser = Depends(current_user),
+        key: str = Depends(required_idempotency_key),
+    ) -> dict[str, str]:
+        return await transition_session(session_id, "cancel", user, key)
+
+    @app.delete(
+        "/api/v1/sessions/{session_id}",
+        status_code=202,
+        tags=["sessions"],
+        response_model=DeletionRequestResponse,
+    )
     async def request_session_deletion(
         session_id: UUID, user: CurrentUser = Depends(current_user)
     ) -> dict[str, str]:

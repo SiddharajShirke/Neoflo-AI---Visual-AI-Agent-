@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from hashlib import sha256
 from typing import Literal
@@ -15,20 +16,20 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class DeviceRegister(StrictModel):
+class DeviceRegisterRequest(StrictModel):
     installation_id: str = Field(min_length=16, max_length=255)
     label: str | None = Field(default=None, min_length=1, max_length=120)
     client_version: str | None = Field(default=None, min_length=1, max_length=64)
 
 
-class ConsentCreate(StrictModel):
+class ConsentCreateRequest(StrictModel):
     device_id: UUID
     scope: Literal["monitoring", "screenshots", "privacy_notice", "retention"]
     policy_version: str = Field(min_length=1, max_length=64)
     granted: bool
 
 
-class SessionCreate(StrictModel):
+class MonitoringSessionCreateRequest(StrictModel):
     device_id: UUID
     monitoring_consent_id: UUID
     screenshot_consent_id: UUID | None = None
@@ -64,9 +65,92 @@ class EventIngestionResponse(StrictModel):
     duplicate_count: int = Field(ge=0)
 
 
+class DeviceRegisterResponse(StrictModel):
+    id: UUID
+    status: Literal["active", "revoked"]
+
+
+class DeviceListItem(StrictModel):
+    id: UUID
+    status: Literal["active", "revoked"]
+    label: str | None
+
+
+class DeviceListResponse(StrictModel):
+    devices: list[DeviceListItem]
+
+
+class ConsentCreateResponse(StrictModel):
+    id: UUID
+    scope: Literal["monitoring", "screenshots", "privacy_notice", "retention"]
+    granted: Literal["true", "false"]
+
+
+class ConsentListItem(StrictModel):
+    id: UUID
+    device_id: UUID
+    scope: Literal["monitoring", "screenshots", "privacy_notice", "retention"]
+    granted: bool
+
+
+class ConsentListResponse(StrictModel):
+    consents: list[ConsentListItem]
+
+
+class MonitoringSessionResponse(StrictModel):
+    id: UUID
+    status: Literal["recording", "paused", "completed", "cancelled"]
+
+
+class MonitoringSessionCreateResponse(MonitoringSessionResponse):
+    screenshot_capture: Literal["not_implemented"]
+
+
+class MonitoringSessionListItem(MonitoringSessionResponse):
+    device_id: UUID
+
+
+class MonitoringSessionListResponse(StrictModel):
+    sessions: list[MonitoringSessionListItem]
+
+
+class SessionTransitionResponse(MonitoringSessionResponse):
+    pass
+
+
+class DeletionRequestResponse(StrictModel):
+    deletion_request_id: UUID
+    status: Literal["requested"]
+
+
+class ApiErrorDetails(StrictModel):
+    code: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=256)
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+class ApiErrorResponse(StrictModel):
+    error: ApiErrorDetails
+
+
+# Backwards-compatible Python names while FastAPI publishes the canonical
+# schema-derived request model names in OpenAPI.
+DeviceRegister = DeviceRegisterRequest
+ConsentCreate = ConsentCreateRequest
+SessionCreate = MonitoringSessionCreateRequest
+
+
 def event_batch_request_hash(payload: EventBatch) -> str:
     """Hash the persistence-relevant request deterministically, never retaining it."""
+    return canonical_request_hash(payload)
+
+
+def canonical_request_hash(payload: BaseModel | Mapping[str, object]) -> str:
+    """Hash a strict request deterministically without retaining its body."""
     canonical = json.dumps(
-        payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
     )
     return sha256(canonical.encode("utf-8")).hexdigest()
