@@ -65,6 +65,18 @@ export async function dispatchRuntimeMessage(
   if (message.type === 'pause') await dependencies.orchestrator.pause();
   if (message.type === 'resume') await dependencies.orchestrator.resume();
   if (message.type === 'stop') await dependencies.orchestrator.stop();
+  if (dependencies.orchestrator.snapshot().kind === 'SIGNED_OUT') {
+    await dependencies.auth.signOut();
+    await dependencies.blockQueuedMutations();
+    const monitoring = await dependencies.orchestrator.initialize(false);
+    await dependencies.setIndicator(monitoring.kind);
+    return {
+      auth: { authenticated: false, email: null },
+      monitoring,
+      domains: await dependencies.listDomains(),
+      protectedCategories: dependencies.protectedCategories
+    };
+  }
   if (message.type === 'retry_sync' && auth.authenticated) await dependencies.deliverAndSchedule();
   if (auth.authenticated) await dependencies.deliverAndSchedule();
   if (message.type === 'add_domain' && message.domain) await dependencies.addDomain(message.domain);

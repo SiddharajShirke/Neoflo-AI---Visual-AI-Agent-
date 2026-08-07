@@ -11,7 +11,9 @@ function containsSensitive(value: unknown): boolean {
   );
 }
 
-function services(options: { signInError?: boolean; authenticated?: boolean } = {}) {
+function services(
+  options: { signInError?: boolean; authenticated?: boolean; startAuthRequired?: boolean } = {}
+) {
   const access = ['access', 'token'].join('_');
   const refresh = ['refresh', 'token'].join('_');
   const provider = ['provider', 'token'].join('_');
@@ -34,11 +36,19 @@ function services(options: { signInError?: boolean; authenticated?: boolean } = 
       signOut: vi.fn(async () => undefined)
     },
     orchestrator: {
-      initialize: vi.fn(async () => ({ kind: 'READY', sessionId: null, consentActive: true })),
-      snapshot: vi.fn(() => ({ kind: 'READY', sessionId: null, consentActive: true })),
+      initialize: vi.fn(async (authenticated: boolean) => ({
+        kind: options.startAuthRequired && !authenticated ? 'SIGNED_OUT' : 'READY',
+        sessionId: null,
+        consentActive: true
+      })),
+      snapshot: vi.fn(() => ({
+        kind: options.startAuthRequired ? 'SIGNED_OUT' : 'READY',
+        sessionId: null,
+        consentActive: true
+      })),
       registerDevice: vi.fn(async () => 'device-1'),
       setMonitoringConsent: vi.fn(async () => true),
-      start: vi.fn(async () => true),
+      start: vi.fn(async () => !options.startAuthRequired),
       pause: vi.fn(async () => true),
       resume: vi.fn(async () => true),
       stop: vi.fn(async () => true)
@@ -100,6 +110,20 @@ describe('background runtime-message auth boundary', () => {
       monitoring: { kind: 'READY', sessionId: null, consentActive: true }
     });
     expect(dependencies.blockQueuedMutations).toHaveBeenCalledOnce();
+    expect(containsSensitive(response)).toBe(false);
+  });
+
+  it('clears worker auth and returns a signed-out popup response after a final direct 401', async () => {
+    const dependencies = services({ startAuthRequired: true });
+
+    const response = await dispatchRuntimeMessage({ type: 'start' }, dependencies);
+
+    expect(dependencies.auth.signOut).toHaveBeenCalledOnce();
+    expect(dependencies.blockQueuedMutations).toHaveBeenCalledOnce();
+    expect(response).toMatchObject({
+      auth: { authenticated: false, email: null },
+      monitoring: { kind: 'SIGNED_OUT' }
+    });
     expect(containsSensitive(response)).toBe(false);
   });
 });
