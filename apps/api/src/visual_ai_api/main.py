@@ -30,7 +30,7 @@ from .schemas import (
     DeviceListResponse,
     DeviceRegister,
     DeviceRegisterResponse,
-    EventBatch,
+    EventBatchV2,
     EventIngestionResponse,
     MonitoringSessionCreateResponse,
     MonitoringSessionListResponse,
@@ -38,7 +38,7 @@ from .schemas import (
     SessionCreate,
     SessionTransitionResponse,
     canonical_request_hash,
-    event_batch_request_hash,
+    event_batch_v2_request_hash,
 )
 from .store import Repository
 
@@ -365,7 +365,7 @@ def create_app(
 
     @app.post("/api/v1/events/batch", status_code=202, tags=["events"])
     async def ingest_events(
-        payload: EventBatch,
+        payload: EventBatchV2,
         request: Request,
         user: CurrentUser = Depends(current_user),
         key: str | None = Depends(idempotency_key),
@@ -377,18 +377,6 @@ def create_app(
         if not limiter.allow(f"events:{user.id}", 60, 60):
             raise ApiError(429, "rate_limited", "Too many requests.")
         for event in payload.events:
-            if (
-                event.page_title_redacted
-                and len(event.page_title_redacted) > settings.max_title_length
-            ):
-                raise ApiError(422, "invalid_event_batch", "The event batch is invalid.")
-            if (
-                event.accessibility_context_redacted
-                and len(event.accessibility_context_redacted.encode()) > settings.max_context_bytes
-            ):
-                raise ApiError(422, "invalid_event_batch", "The event batch is invalid.")
-            if event.page_origin and ("?" in event.page_origin or "/" in event.page_origin[8:]):
-                raise ApiError(422, "invalid_event_batch", "The event batch is invalid.")
             occurred_at = event.occurred_at
             if occurred_at.tzinfo is None:
                 raise ApiError(422, "invalid_event_batch", "The event batch is invalid.")
@@ -402,18 +390,38 @@ def create_app(
             payload.session_id,
             payload.events,
             key,
-            event_batch_request_hash(payload),
+            event_batch_v2_request_hash(payload),
         )
         if result.outcome == "conflict":
             raise ApiError(409, "idempotency_key_reused", "The idempotency key was reused.")
         if result.outcome == "in_progress":
             raise ApiError(409, "idempotency_request_in_progress", "Retry the request shortly.")
+        state_errors = {
+            "device_inactive": ("device_revoked", "The device is unavailable."),
+            "consent_inactive": ("consent_inactive", "Monitoring consent is inactive."),
+            "session_not_recording": (
+                "session_not_recording",
+                "The monitoring session is not recording.",
+            ),
+            "policy_mismatch": (
+                "capture_policy_mismatch",
+                "The capture policy does not match the session.",
+            ),
+        }
+        if result.outcome in state_errors:
+            code, message = state_errors[result.outcome]
+            raise ApiError(409, code, message)
         if (
             result.response_status != 202
             or result.accepted_count is None
             or result.duplicate_count is None
         ):
             raise ApiError(503, "database_unavailable", "The service is unavailable.")
+        try:
+            await repository.publish_outbox(settings.outbox_max_batch)
+        except ApiError:
+            # Ingestion has committed. The durable outbox is retried by a later bounded attempt.
+            pass
         return EventIngestionResponse(
             accepted_count=result.accepted_count, duplicate_count=result.duplicate_count
         )

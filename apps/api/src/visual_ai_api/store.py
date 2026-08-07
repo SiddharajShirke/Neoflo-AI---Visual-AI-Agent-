@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from .errors import ApiError
-from .schemas import BrowserEvent, ConsentCreate, DeviceRegister, SessionCreate
+from .schemas import BrowserEventV2, ConsentCreate, DeviceRegister, SessionCreate
 
 
 def now() -> datetime:
@@ -56,7 +56,16 @@ class Session:
 
 @dataclass(frozen=True)
 class IngestResult:
-    outcome: Literal["created", "completed", "conflict", "in_progress"]
+    outcome: Literal[
+        "created",
+        "completed",
+        "conflict",
+        "in_progress",
+        "device_inactive",
+        "consent_inactive",
+        "session_not_recording",
+        "policy_mismatch",
+    ]
     response_status: int | None
     accepted_count: int | None
     duplicate_count: int | None
@@ -112,7 +121,7 @@ class Repository(Protocol):
         route: str,
         device_id: UUID,
         session_id: UUID,
-        events: list[BrowserEvent],
+        events: list[BrowserEventV2],
         idempotency_key: str | None = None,
         request_hash: str | None = None,
     ) -> IngestResult: ...
@@ -127,9 +136,7 @@ class MemoryRepository:
         self.events: dict[tuple[UUID, str], tuple[UUID, str]] = {}
         self.deletion_requests: dict[UUID, UUID] = {}
         self.idempotency: dict[tuple[UUID, str], tuple[str, str, dict[str, int]]] = {}
-        self.control_idempotency: dict[
-            tuple[UUID, str], tuple[str, str, int, dict[str, str]]
-        ] = {}
+        self.control_idempotency: dict[tuple[UUID, str], tuple[str, str, int, dict[str, str]]] = {}
 
     async def ready(self) -> bool:
         return True
@@ -339,7 +346,7 @@ class MemoryRepository:
         route: str,
         device_id: UUID,
         session_id: UUID,
-        events: list[BrowserEvent],
+        events: list[BrowserEventV2],
         idempotency_key: str | None = None,
         request_hash: str | None = None,
     ) -> IngestResult:
@@ -361,7 +368,18 @@ class MemoryRepository:
             raise ApiError(409, "resource_relationship_mismatch", "The resources do not match.")
         if session.status != "recording":
             raise ApiError(409, "session_not_recording", "The session is not recording.")
-        await self.owned_consent(user_id, session.monitoring_consent_id, device_id, "monitoring")
+        try:
+            await self.owned_consent(
+                user_id, session.monitoring_consent_id, device_id, "monitoring"
+            )
+        except ApiError as error:
+            raise ApiError(409, "consent_inactive", "Monitoring consent is unavailable.") from error
+        if any(event.capture_policy_version != session.capture_policy_version for event in events):
+            raise ApiError(
+                409,
+                "capture_policy_mismatch",
+                "The capture policy does not match the session.",
+            )
         accepted = duplicates = 0
         sequences: set[int] = set()
         for event in events:

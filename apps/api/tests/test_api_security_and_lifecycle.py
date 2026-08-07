@@ -444,10 +444,12 @@ def test_event_batch_requires_recording_session_and_idempotency_key() -> None:
         "session_id": session_id,
         "events": [
             {
-                "client_event_id": "event-1",
+                "client_event_id": "11111111-1111-4111-8111-111111111111",
                 "sequence_number": 1,
                 "event_kind": "navigation",
                 "occurred_at": datetime.now(UTC).isoformat(),
+                "page_domain": "example.test",
+                "transition_type": "link",
                 "capture_policy_version": "v1",
             }
         ],
@@ -467,7 +469,7 @@ def test_event_batch_requires_recording_session_and_idempotency_key() -> None:
     )
     assert retry.status_code == 202
     assert retry.json() == response.json()
-    body["events"][0]["client_event_id"] = "event-2"
+    body["events"][0]["client_event_id"] = "22222222-2222-4222-8222-222222222222"
     conflict = api.post(
         "/api/v1/events/batch", headers={**auth(), "Idempotency-Key": "batch-1"}, json=body
     )
@@ -487,10 +489,12 @@ def test_event_batch_rejects_idempotency_keys_longer_than_128_characters() -> No
             "session_id": "00000000-0000-0000-0000-0000000000b2",
             "events": [
                 {
-                    "client_event_id": "event-1",
+                    "client_event_id": "11111111-1111-4111-8111-111111111111",
                     "sequence_number": 1,
                     "event_kind": "navigation",
                     "occurred_at": datetime.now(UTC).isoformat(),
+                    "page_domain": "example.test",
+                    "transition_type": "link",
                     "capture_policy_version": "v1",
                 }
             ],
@@ -517,10 +521,12 @@ def test_event_batch_maps_repository_conflict_to_409() -> None:
             "session_id": "00000000-0000-0000-0000-0000000000b2",
             "events": [
                 {
-                    "client_event_id": "event-1",
+                    "client_event_id": "11111111-1111-4111-8111-111111111111",
                     "sequence_number": 1,
                     "event_kind": "navigation",
                     "occurred_at": datetime.now(UTC).isoformat(),
+                    "page_domain": "example.test",
+                    "transition_type": "link",
                     "capture_policy_version": "v1",
                 }
             ],
