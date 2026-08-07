@@ -32,6 +32,29 @@ test('detects a fake secret in a source file', () => {
   }
 });
 
+test('does not treat the Phoenix access-token protocol key map as a secret', () => {
+  const tree = fixture();
+  try {
+    tree.write('apps/extension/.output/chrome-mv3/background.js', 'access_token:"access_token"');
+    assert.deepEqual(scanDirectory(tree.root), []);
+  } finally {
+    tree.dispose();
+  }
+});
+
+test('does not treat the Supabase Realtime authentication warning as a secret', () => {
+  const tree = fixture();
+  try {
+    tree.write(
+      'apps/extension/.output/chrome-mv3/background.js',
+      'console.warn("Failed to set initial Realtime auth token:", error); createClient("rest/v1")'
+    );
+    assert.deepEqual(scanDirectory(tree.root), []);
+  } finally {
+    tree.dispose();
+  }
+});
+
 test('ignores generated runtime and dependency files', () => {
   const tree = fixture();
   try {
