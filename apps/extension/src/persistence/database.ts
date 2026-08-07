@@ -12,13 +12,13 @@ export type ControlPlaneStore = (typeof CONTROL_PLANE_STORES)[number];
 const DATABASE_VERSION = 2;
 
 const forbiddenField =
-  /^(access_?token|refresh_?token|password|authorization|cookie|url|dom|screenshot|clipboard|form(_value)?|browser_?event)$/i;
+  /^(accesstoken|refreshtoken|password|authorization(?:header)?|cookies?|url|pageurl|dom|screenshot|clipboard|form(?:value|values)?|browserevent)$/i;
 
 function assertNonSecret(value: unknown): void {
   if (Array.isArray(value)) return value.forEach(assertNonSecret);
   if (!value || typeof value !== 'object') return;
   for (const [key, nested] of Object.entries(value)) {
-    if (forbiddenField.test(key))
+    if (forbiddenField.test(key.replaceAll(/[_-]/g, '').toLowerCase()))
       throw new Error('secret or browser-content field cannot be persisted');
     assertNonSecret(nested);
   }

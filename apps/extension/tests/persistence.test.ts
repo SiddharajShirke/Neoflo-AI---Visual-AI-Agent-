@@ -39,6 +39,17 @@ describe('control-plane IndexedDB', () => {
     database.close();
   });
 
+  it.each(['page_url', 'pageURL', 'authorizationHeader'])(
+    'rejects nested normalized sensitive key variant %s',
+    async (field) => {
+      const database = await openControlPlaneDatabase(`m3-nested-${field}-${crypto.randomUUID()}`);
+      await expect(
+        database.put('extension_config', { id: 'unsafe', metadata: { [field]: 'synthetic' } })
+      ).rejects.toThrow('secret or browser-content field');
+      database.close();
+    }
+  );
+
   it('upgrades the unreleased version-one queue without preserving its obsolete key', async () => {
     const name = `m3-upgrade-${crypto.randomUUID()}`;
     await new Promise<void>((resolve, reject) => {
