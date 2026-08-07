@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/deletion-request-response.v1.schema.json",
+  "title": "DeletionRequestResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deletion_request_id", "status"],
+  "properties": {
+    "deletion_request_id": { "type": "string", "format": "uuid" },
+    "status": { "const": "requested" }
+  }
+}

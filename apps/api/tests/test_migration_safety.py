@@ -44,3 +44,21 @@ def test_idempotency_migration_claims_key_per_owner_before_comparing_route() -> 
     assert "unique (user_id, idempotency_key)" in table_migration
     assert "'in_progress'" in table_migration
     assert "p_route text" in rpc_migration
+
+
+def test_control_plane_migration_keeps_idempotency_and_consent_withdrawal_server_only() -> None:
+    migration = (
+        ROOT
+        / "supabase"
+        / "migrations"
+        / "0016_control_plane_idempotency_and_consent_withdrawal.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "consent_records_one_active_grant_idx" in migration
+    assert "response_metadata = jsonb_build_object" in migration
+    assert "request_body" not in migration
+    assert "raw_request_body" not in migration
+    assert "security definer" in migration
+    assert "to service_role" in migration
+    assert "from public, anon, authenticated" in migration
+    assert "set revoked_at = timezone('utc', now())" in migration

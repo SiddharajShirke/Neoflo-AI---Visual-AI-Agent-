@@ -62,17 +62,49 @@ class IngestResult:
     duplicate_count: int | None
 
 
+@dataclass(frozen=True)
+class ControlMutationResult:
+    outcome: Literal["created", "completed", "conflict", "in_progress"]
+    response_status: int | None
+    response_metadata: dict[str, str] | None
+
+
 class Repository(Protocol):
     async def ready(self) -> bool: ...
     async def register_device(self, user_id: UUID, data: DeviceRegister) -> Device: ...
     async def list_devices(self, user_id: UUID) -> list[Device]: ...
     async def revoke_device(self, user_id: UUID, device_id: UUID) -> Device: ...
     async def create_consent(self, user_id: UUID, data: ConsentCreate) -> Consent: ...
+    async def create_consent_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: ConsentCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult: ...
     async def list_consents(self, user_id: UUID) -> list[Consent]: ...
     async def create_session(self, user_id: UUID, data: SessionCreate) -> Session: ...
+    async def create_session_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: SessionCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult: ...
     async def list_sessions(self, user_id: UUID) -> list[Session]: ...
     async def owned_session(self, user_id: UUID, session_id: UUID) -> Session: ...
     async def transition(self, user_id: UUID, session_id: UUID, action: str) -> Session: ...
+    async def transition_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        session_id: UUID,
+        action: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult: ...
     async def request_deletion(self, user_id: UUID, session_id: UUID) -> UUID: ...
     async def ingest(
         self,
@@ -95,6 +127,9 @@ class MemoryRepository:
         self.events: dict[tuple[UUID, str], tuple[UUID, str]] = {}
         self.deletion_requests: dict[UUID, UUID] = {}
         self.idempotency: dict[tuple[UUID, str], tuple[str, str, dict[str, int]]] = {}
+        self.control_idempotency: dict[
+            tuple[UUID, str], tuple[str, str, int, dict[str, str]]
+        ] = {}
 
     async def ready(self) -> bool:
         return True
@@ -131,6 +166,43 @@ class MemoryRepository:
         )
         self.consents[consent.id] = consent
         return consent
+
+    async def create_consent_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: ConsentCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        existing = self.control_idempotency.get((user_id, idempotency_key))
+        if existing is not None:
+            saved_route, saved_hash, status, metadata = existing
+            if saved_route != route or saved_hash != request_hash:
+                return ControlMutationResult("conflict", None, None)
+            return ControlMutationResult("completed", status, metadata)
+        for consent in self.consents.values():
+            if (
+                consent.user_id == user_id
+                and consent.device_id == data.device_id
+                and consent.scope == data.scope
+                and consent.granted
+                and consent.revoked_at is None
+            ):
+                consent.revoked_at = now()
+        consent = await self.create_consent(user_id, data)
+        metadata = {
+            "id": str(consent.id),
+            "scope": consent.scope,
+            "granted": str(consent.granted).lower(),
+        }
+        self.control_idempotency[(user_id, idempotency_key)] = (
+            route,
+            request_hash,
+            201,
+            metadata,
+        )
+        return ControlMutationResult("created", 201, metadata)
 
     async def list_consents(self, user_id: UUID) -> list[Consent]:
         return [consent for consent in self.consents.values() if consent.user_id == user_id]
@@ -171,6 +243,30 @@ class MemoryRepository:
         self.sessions[session.id] = session
         return session
 
+    async def create_session_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: SessionCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        existing = self.control_idempotency.get((user_id, idempotency_key))
+        if existing is not None:
+            saved_route, saved_hash, status, metadata = existing
+            if saved_route != route or saved_hash != request_hash:
+                return ControlMutationResult("conflict", None, None)
+            return ControlMutationResult("completed", status, metadata)
+        session = await self.create_session(user_id, data)
+        metadata = {"id": str(session.id), "status": session.status}
+        self.control_idempotency[(user_id, idempotency_key)] = (
+            route,
+            request_hash,
+            201,
+            metadata,
+        )
+        return ControlMutationResult("created", 201, metadata)
+
     async def list_sessions(self, user_id: UUID) -> list[Session]:
         return [session for session in self.sessions.values() if session.user_id == user_id]
 
@@ -203,6 +299,31 @@ class MemoryRepository:
         session.status = target
         session.ended_at = now() if target in {"completed", "cancelled"} else None
         return session
+
+    async def transition_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        session_id: UUID,
+        action: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        existing = self.control_idempotency.get((user_id, idempotency_key))
+        if existing is not None:
+            saved_route, saved_hash, status, metadata = existing
+            if saved_route != route or saved_hash != request_hash:
+                return ControlMutationResult("conflict", None, None)
+            return ControlMutationResult("completed", status, metadata)
+        session = await self.transition(user_id, session_id, action)
+        metadata = {"id": str(session.id), "status": session.status}
+        self.control_idempotency[(user_id, idempotency_key)] = (
+            route,
+            request_hash,
+            200,
+            metadata,
+        )
+        return ControlMutationResult("created", 200, metadata)
 
     async def request_deletion(self, user_id: UUID, session_id: UUID) -> UUID:
         session = await self.owned_session(user_id, session_id)

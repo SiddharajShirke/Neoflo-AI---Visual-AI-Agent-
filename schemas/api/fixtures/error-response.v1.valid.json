@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "authentication_required",
+    "message": "Authentication is required.",
+    "request_id": "00000000-0000-0000-0000-0000000000a1"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/consent-list-response.v1.schema.json",
+  "title": "ConsentListResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["consents"],
+  "properties": {
+    "consents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "device_id", "scope", "granted"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "device_id": { "type": "string", "format": "uuid" },
+          "scope": {
+            "type": "string",
+            "enum": ["monitoring", "screenshots", "privacy_notice", "retention"]
+          },
+          "granted": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

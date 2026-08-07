@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/consent-create-response.v1.schema.json",
+  "title": "ConsentCreateResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "scope", "granted"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "scope": {
+      "type": "string",
+      "enum": ["monitoring", "screenshots", "privacy_notice", "retention"]
+    },
+    "granted": { "type": "string", "enum": ["true", "false"] }
+  }
+}

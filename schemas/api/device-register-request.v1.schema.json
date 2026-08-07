@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/device-register-request.v1.schema.json",
+  "title": "DeviceRegisterRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["installation_id"],
+  "properties": {
+    "installation_id": { "type": "string", "minLength": 16, "maxLength": 255 },
+    "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+    "client_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+  }
+}

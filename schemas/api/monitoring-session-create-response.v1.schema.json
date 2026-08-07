@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://visual-ai.example/schemas/api/monitoring-session-create-response.v1.schema.json",
+  "title": "MonitoringSessionCreateResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "status", "screenshot_capture"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string", "enum": ["recording", "paused", "completed", "cancelled"] },
+    "screenshot_capture": { "const": "not_implemented" }
+  }
+}

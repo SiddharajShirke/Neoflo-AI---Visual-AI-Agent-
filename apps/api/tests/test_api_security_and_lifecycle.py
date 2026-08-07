@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from visual_ai_api.auth import CurrentUser
 from visual_ai_api.config import Settings
@@ -60,9 +61,9 @@ def auth(token: str = "user-a") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def create_device(api: TestClient) -> str:
+def create_device(api: TestClient, installation_id: str = "a" * 16) -> str:
     response = api.post(
-        "/api/v1/devices/register", headers=auth(), json={"installation_id": "a" * 16}
+        "/api/v1/devices/register", headers=auth(), json={"installation_id": installation_id}
     )
     assert response.status_code == 201
     body = response.json()
@@ -75,7 +76,7 @@ def create_device(api: TestClient) -> str:
 def create_monitoring_consent(api: TestClient, device_id: str, scope: str = "monitoring") -> str:
     response = api.post(
         "/api/v1/consents",
-        headers=auth(),
+        headers={**auth(), "Idempotency-Key": f"consent-{device_id}-{scope}"},
         json={
             "device_id": device_id,
             "scope": scope,
@@ -91,13 +92,22 @@ def create_monitoring_consent(api: TestClient, device_id: str, scope: str = "mon
     return identifier
 
 
+def session_payload(device_id: str, consent_id: str) -> dict[str, str]:
+    return {
+        "device_id": device_id,
+        "monitoring_consent_id": consent_id,
+        "capture_policy_version": "v1",
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+
+
 def test_terminal_session_deletion_is_asynchronous_and_idempotent() -> None:
     api = client()
     device_id = create_device(api)
     consent_id = create_monitoring_consent(api, device_id)
     response = api.post(
         "/api/v1/sessions",
-        headers=auth(),
+        headers={**auth(), "Idempotency-Key": "session-for-deletion"},
         json={
             "device_id": device_id,
             "monitoring_consent_id": consent_id,
@@ -106,12 +116,274 @@ def test_terminal_session_deletion_is_asynchronous_and_idempotent() -> None:
         },
     )
     session_id = response.json()["id"]
-    assert api.post(f"/api/v1/sessions/{session_id}/complete", headers=auth()).status_code == 200
+    assert (
+        api.post(
+            f"/api/v1/sessions/{session_id}/complete",
+            headers={**auth(), "Idempotency-Key": "complete-for-deletion"},
+        ).status_code
+        == 200
+    )
     first = api.delete(f"/api/v1/sessions/{session_id}", headers=auth())
     second = api.delete(f"/api/v1/sessions/{session_id}", headers=auth())
     assert first.status_code == second.status_code == 202
     assert first.json()["deletion_request_id"] == second.json()["deletion_request_id"]
     assert api.get(f"/api/v1/sessions/{session_id}", headers=auth()).status_code == 200
+
+
+def test_consent_creation_requires_an_idempotency_key() -> None:
+    api = client()
+    device_id = create_device(api)
+
+    response = api.post(
+        "/api/v1/consents",
+        headers=auth(),
+        json={
+            "device_id": device_id,
+            "scope": "monitoring",
+            "policy_version": "v1",
+            "granted": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "idempotency_key_required"
+
+
+def test_consent_timeout_after_commit_replays_the_original_response() -> None:
+    api = client()
+    device_id = create_device(api)
+    payload = {
+        "device_id": device_id,
+        "scope": "monitoring",
+        "policy_version": "v1",
+        "granted": True,
+    }
+    headers = {**auth(), "Idempotency-Key": "consent-timeout-replay"}
+
+    committed = api.post("/api/v1/consents", headers=headers, json=payload)
+    replay = api.post("/api/v1/consents", headers=headers, json=payload)
+
+    assert committed.status_code == replay.status_code == 201
+    assert replay.json() == committed.json()
+
+
+def test_changed_consent_request_with_the_same_key_is_rejected() -> None:
+    api = client()
+    device_id = create_device(api)
+    headers = {**auth(), "Idempotency-Key": "consent-request-conflict"}
+    granted = {
+        "device_id": device_id,
+        "scope": "monitoring",
+        "policy_version": "v1",
+        "granted": True,
+    }
+    withdrawn = {**granted, "granted": False}
+
+    assert api.post("/api/v1/consents", headers=headers, json=granted).status_code == 201
+    conflict = api.post("/api/v1/consents", headers=headers, json=withdrawn)
+
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "idempotency_key_reused"
+
+
+def test_session_creation_requires_an_idempotency_key() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+
+    response = api.post(
+        "/api/v1/sessions", headers=auth(), json=session_payload(device_id, consent_id)
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "idempotency_key_required"
+
+
+def test_withdrawal_revokes_the_active_grant_before_a_session_can_start() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+
+    withdrawal = api.post(
+        "/api/v1/consents",
+        headers={**auth(), "Idempotency-Key": "withdraw-monitoring-consent"},
+        json={
+            "device_id": device_id,
+            "scope": "monitoring",
+            "policy_version": "v1",
+            "granted": False,
+        },
+    )
+    session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-after-withdrawal"},
+        json=session_payload(device_id, consent_id),
+    )
+
+    assert withdrawal.status_code == 201
+    assert session.status_code == 409
+    assert session.json()["error"]["code"] == "invalid_consent"
+
+
+def test_repeated_withdrawal_replays_its_original_audit_response() -> None:
+    api = client()
+    device_id = create_device(api)
+    create_monitoring_consent(api, device_id)
+    headers = {**auth(), "Idempotency-Key": "withdrawal-timeout-replay"}
+    payload = {
+        "device_id": device_id,
+        "scope": "monitoring",
+        "policy_version": "v1",
+        "granted": False,
+    }
+
+    committed = api.post("/api/v1/consents", headers=headers, json=payload)
+    replay = api.post("/api/v1/consents", headers=headers, json=payload)
+
+    assert committed.status_code == replay.status_code == 201
+    assert replay.json() == committed.json()
+
+
+def test_new_grant_replaces_the_previous_active_grant_for_its_device_and_scope() -> None:
+    api = client()
+    device_id = create_device(api)
+    first = api.post(
+        "/api/v1/consents",
+        headers={**auth(), "Idempotency-Key": "initial-monitoring-grant"},
+        json={
+            "device_id": device_id,
+            "scope": "monitoring",
+            "policy_version": "v1",
+            "granted": True,
+        },
+    )
+    second = api.post(
+        "/api/v1/consents",
+        headers={**auth(), "Idempotency-Key": "replacement-monitoring-grant"},
+        json={
+            "device_id": device_id,
+            "scope": "monitoring",
+            "policy_version": "v2",
+            "granted": True,
+        },
+    )
+
+    old_session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-with-replaced-consent"},
+        json=session_payload(device_id, first.json()["id"]),
+    )
+    current_session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-with-current-consent"},
+        json=session_payload(device_id, second.json()["id"]),
+    )
+
+    assert first.status_code == second.status_code == 201
+    assert old_session.status_code == 409
+    assert current_session.status_code == 201
+
+
+def test_withdrawal_cannot_revoke_a_grant_from_another_device() -> None:
+    api = client()
+    first_device_id = create_device(api)
+    second_device_id = create_device(api, "b" * 16)
+    first_consent_id = create_monitoring_consent(api, first_device_id)
+
+    withdrawal = api.post(
+        "/api/v1/consents",
+        headers={**auth(), "Idempotency-Key": "withdraw-second-device"},
+        json={
+            "device_id": second_device_id,
+            "scope": "monitoring",
+            "policy_version": "v1",
+            "granted": False,
+        },
+    )
+    session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-for-first-device"},
+        json=session_payload(first_device_id, first_consent_id),
+    )
+
+    assert withdrawal.status_code == 201
+    assert session.status_code == 201
+
+
+def test_session_timeout_after_commit_replays_the_original_response() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    headers = {**auth(), "Idempotency-Key": "session-timeout-replay"}
+    payload = session_payload(device_id, consent_id)
+
+    committed = api.post("/api/v1/sessions", headers=headers, json=payload)
+    replay = api.post("/api/v1/sessions", headers=headers, json=payload)
+
+    assert committed.status_code == replay.status_code == 201
+    assert replay.json() == committed.json()
+
+
+def test_session_transition_requires_an_idempotency_key() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-for-transition"},
+        json=session_payload(device_id, consent_id),
+    )
+
+    response = api.post(f"/api/v1/sessions/{session.json()['id']}/pause", headers=auth())
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "idempotency_key_required"
+
+
+@pytest.mark.parametrize("action", ["pause", "resume", "complete", "cancel"])
+def test_session_transition_timeout_after_commit_replays_the_original_response(action: str) -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": f"session-for-{action}"},
+        json=session_payload(device_id, consent_id),
+    )
+    session_id = session.json()["id"]
+    if action == "resume":
+        paused = api.post(
+            f"/api/v1/sessions/{session_id}/pause",
+            headers={**auth(), "Idempotency-Key": "pause-before-resume"},
+        )
+        assert paused.status_code == 200
+    headers = {**auth(), "Idempotency-Key": f"{action}-timeout-replay"}
+
+    committed = api.post(f"/api/v1/sessions/{session_id}/{action}", headers=headers)
+    replay = api.post(f"/api/v1/sessions/{session_id}/{action}", headers=headers)
+
+    assert committed.status_code == replay.status_code == 200
+    assert replay.json() == committed.json()
+
+
+def test_transition_key_is_bound_to_its_exact_session_operation() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    session = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-for-operation-binding"},
+        json=session_payload(device_id, consent_id),
+    )
+    session_id = session.json()["id"]
+    shared_key = {**auth(), "Idempotency-Key": "transition-operation-binding"}
+
+    pause = api.post(f"/api/v1/sessions/{session_id}/pause", headers=shared_key)
+    resume = api.post(f"/api/v1/sessions/{session_id}/resume", headers=shared_key)
+
+    assert pause.status_code == 200
+    assert resume.status_code == 409
+    assert resume.json()["error"]["code"] == "idempotency_key_reused"
 
 
 def test_valid_screenshot_consent_is_linked_but_capture_is_disabled() -> None:
@@ -121,7 +393,7 @@ def test_valid_screenshot_consent_is_linked_but_capture_is_disabled() -> None:
     screenshots = create_monitoring_consent(api, device_id, "screenshots")
     response = api.post(
         "/api/v1/sessions",
-        headers=auth(),
+        headers={**auth(), "Idempotency-Key": "session-with-screenshot-consent"},
         json={
             "device_id": device_id,
             "monitoring_consent_id": monitoring,
@@ -140,7 +412,7 @@ def test_cross_user_session_access_returns_safe_not_found() -> None:
     consent_id = create_monitoring_consent(api, device_id)
     session = api.post(
         "/api/v1/sessions",
-        headers=auth(),
+        headers={**auth(), "Idempotency-Key": "session-for-cross-user-test"},
         json={
             "device_id": device_id,
             "monitoring_consent_id": consent_id,
@@ -159,7 +431,7 @@ def test_event_batch_requires_recording_session_and_idempotency_key() -> None:
     consent_id = create_monitoring_consent(api, device_id)
     session_id = api.post(
         "/api/v1/sessions",
-        headers=auth(),
+        headers={**auth(), "Idempotency-Key": "session-for-event-test"},
         json={
             "device_id": device_id,
             "monitoring_consent_id": consent_id,

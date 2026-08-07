@@ -177,6 +177,111 @@ async def test_create_consent_serializes_uuid_for_postgrest_json_payload() -> No
 
 
 @pytest.mark.asyncio
+async def test_create_consent_idempotent_uses_the_transactional_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "created",
+                    "response_status": 201,
+                    "consent_id": "00000000-0000-0000-0000-0000000000d1",
+                    "consent_scope": "monitoring",
+                    "consent_granted": True,
+                }
+            ],
+        )
+
+    repository = PostgrestRepository(
+        "https://project.supabase.co",
+        "server-only-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await repository.create_consent_idempotent(
+        USER_ID,
+        "/api/v1/consents",
+        ConsentCreate(
+            device_id=DEVICE_ID,
+            scope="monitoring",
+            policy_version="v1",
+            granted=True,
+        ),
+        "consent-idempotency-key",
+        "a" * 64,
+    )
+
+    assert result.response_metadata == {
+        "id": "00000000-0000-0000-0000-0000000000d1",
+        "scope": "monitoring",
+        "granted": "true",
+    }
+    assert requests[0].url.path == "/rest/v1/rpc/create_consent_idempotent"
+    payload = json.loads(requests[0].content)
+    assert payload["p_user_id"] == str(USER_ID)
+    assert payload["p_device_id"] == str(DEVICE_ID)
+    assert payload["p_request_sha256"] == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_session_control_mutations_use_transactional_rpcs() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "created",
+                    "response_status": 201 if "create_monitoring" in request.url.path else 200,
+                    "session_id": str(SESSION_ID),
+                    "session_status": "recording",
+                }
+            ],
+        )
+
+    repository = PostgrestRepository(
+        "https://project.supabase.co",
+        "server-only-key",
+        transport=httpx.MockTransport(handler),
+    )
+    session = await repository.create_session_idempotent(
+        USER_ID,
+        "/api/v1/sessions",
+        SessionCreate(
+            device_id=DEVICE_ID,
+            monitoring_consent_id=UUID("00000000-0000-0000-0000-0000000000d1"),
+            capture_policy_version="v1",
+            started_at=datetime(2026, 8, 6, 10, 30, tzinfo=UTC),
+        ),
+        "session-idempotency-key",
+        "b" * 64,
+    )
+    transition = await repository.transition_idempotent(
+        USER_ID,
+        f"/api/v1/sessions/{SESSION_ID}/resume",
+        SESSION_ID,
+        "resume",
+        "resume-idempotency-key",
+        "c" * 64,
+    )
+
+    assert session.response_metadata == {"id": str(SESSION_ID), "status": "recording"}
+    assert transition.response_metadata == {"id": str(SESSION_ID), "status": "recording"}
+    assert [request.url.path for request in requests] == [
+        "/rest/v1/rpc/create_monitoring_session_idempotent",
+        "/rest/v1/rpc/transition_monitoring_session_idempotent",
+    ]
+    transition_payload = json.loads(requests[1].content)
+    assert transition_payload["p_route"] == f"/api/v1/sessions/{SESSION_ID}/resume"
+    assert transition_payload["p_target"] == "recording"
+
+
+@pytest.mark.asyncio
 async def test_create_session_rejects_a_consent_from_another_device() -> None:
     """A service-role write must not bind a session to another device's consent."""
 

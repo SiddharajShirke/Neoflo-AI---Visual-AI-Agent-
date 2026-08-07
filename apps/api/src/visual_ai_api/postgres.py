@@ -15,7 +15,7 @@ from pydantic import TypeAdapter
 
 from .errors import ApiError
 from .schemas import BrowserEvent, ConsentCreate, DeviceRegister, SessionCreate
-from .store import Consent, Device, IngestResult, Session
+from .store import Consent, ControlMutationResult, Device, IngestResult, Session
 
 _JSON_SERIALIZER = TypeAdapter(object)
 
@@ -158,6 +158,45 @@ class PostgrestRepository:
         )
         return self._consent(rows[0])
 
+    async def create_consent_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: ConsentCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        rows = await self._request(
+            "POST",
+            "/rpc/create_consent_idempotent",
+            json={
+                "p_user_id": str(user_id),
+                "p_route": route,
+                "p_device_id": str(data.device_id),
+                "p_scope": data.scope,
+                "p_policy_version": data.policy_version,
+                "p_granted": data.granted,
+                "p_idempotency_key": idempotency_key,
+                "p_request_sha256": request_hash,
+            },
+        )
+        result = rows[0]
+        outcome = result.get("outcome")
+        if outcome not in {"created", "completed", "conflict", "in_progress"}:
+            raise ApiError(503, "database_unavailable", "The service is unavailable.")
+        metadata = None
+        if result.get("consent_id") is not None:
+            metadata = {
+                "id": str(result["consent_id"]),
+                "scope": str(result["consent_scope"]),
+                "granted": str(bool(result["consent_granted"])).lower(),
+            }
+        return ControlMutationResult(
+            outcome,
+            int(result["response_status"]) if result.get("response_status") is not None else None,
+            metadata,
+        )
+
     async def list_consents(self, user_id: UUID) -> list[Consent]:
         rows = await self._request("GET", "/consent_records", params={"user_id": f"eq.{user_id}"})
         return [self._consent(row) for row in rows]
@@ -198,6 +237,33 @@ class PostgrestRepository:
         )
         return self._session(rows[0])
 
+    async def create_session_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        data: SessionCreate,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        rows = await self._request(
+            "POST",
+            "/rpc/create_monitoring_session_idempotent",
+            json={
+                "p_user_id": str(user_id),
+                "p_route": route,
+                "p_device_id": str(data.device_id),
+                "p_monitoring_consent_id": str(data.monitoring_consent_id),
+                "p_screenshot_consent_id": (
+                    str(data.screenshot_consent_id) if data.screenshot_consent_id else None
+                ),
+                "p_capture_policy_version": data.capture_policy_version,
+                "p_started_at": data.started_at,
+                "p_idempotency_key": idempotency_key,
+                "p_request_sha256": request_hash,
+            },
+        )
+        return self._session_control_result(rows[0])
+
     async def list_sessions(self, user_id: UUID) -> list[Session]:
         rows = await self._request(
             "GET", "/monitoring_sessions", params={"user_id": f"eq.{user_id}"}
@@ -227,6 +293,49 @@ class PostgrestRepository:
             json={"p_session_id": str(session_id), "p_user_id": str(user_id), "p_target": target},
         )
         return await self.owned_session(user_id, session_id)
+
+    async def transition_idempotent(
+        self,
+        user_id: UUID,
+        route: str,
+        session_id: UUID,
+        action: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> ControlMutationResult:
+        target = {
+            "pause": "paused",
+            "resume": "recording",
+            "complete": "completed",
+            "cancel": "cancelled",
+        }[action]
+        rows = await self._request(
+            "POST",
+            "/rpc/transition_monitoring_session_idempotent",
+            json={
+                "p_user_id": str(user_id),
+                "p_route": route,
+                "p_session_id": str(session_id),
+                "p_target": target,
+                "p_idempotency_key": idempotency_key,
+                "p_request_sha256": request_hash,
+            },
+        )
+        return self._session_control_result(rows[0])
+
+    @staticmethod
+    def _session_control_result(result: dict[str, Any]) -> ControlMutationResult:
+        outcome = result.get("outcome")
+        if outcome not in {"created", "completed", "conflict", "in_progress"}:
+            raise ApiError(503, "database_unavailable", "The service is unavailable.")
+        metadata = None
+        if result.get("session_id") is not None:
+            metadata = {"id": str(result["session_id"]), "status": str(result["session_status"])}
+        return ControlMutationResult(
+            outcome,
+            int(result["response_status"]) if result.get("response_status") is not None else None,
+            metadata,
+        )
 
     async def request_deletion(self, user_id: UUID, session_id: UUID) -> UUID:
         rows = await self._request(

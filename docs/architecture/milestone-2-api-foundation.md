@@ -26,3 +26,17 @@ Session deletion is asynchronous: a terminal, owner-scoped session receives an
 idempotent `deletion_requests` record and a `202 Accepted` response. The route
 does not delete relational data or screenshot objects, and it does not claim
 completion. Storage deletion orchestration remains deferred.
+
+## Milestone 3 control-plane gate
+
+Consent creation, monitoring-session creation, and each fixed lifecycle
+transition require an `Idempotency-Key`. FastAPI binds the key to the verified
+owner, exact public route, and canonical request hash, then calls a
+service-role-only transactional RPC. Replays return the original safe response;
+changed request/route use returns a conflict. The idempotency table stores only
+the request hash and safe response metadata, never a request body.
+
+Submitting a new consent grant or a withdrawal revokes the active grant for
+the same owner, device, and scope before an immutable replacement record is
+appended. This prevents an older granted consent from being used to start a
+later monitoring session.
