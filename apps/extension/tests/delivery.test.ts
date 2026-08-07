@@ -100,6 +100,26 @@ describe('durable mutation delivery', () => {
     database.close();
   });
 
+  it('keeps a transport-failed mutation pending for the next alarm delivery', async () => {
+    const database = await openControlPlaneDatabase(`delivery-${crypto.randomUUID()}`);
+    const mutation = await queued(database, 'pause_session');
+    const engine = new MutationDeliveryEngine(
+      database,
+      {
+        pauseSession: vi.fn().mockRejectedValue(new ApiClientError(0, 'network_error'))
+      } as never,
+      { random: () => 1 }
+    );
+    await engine.deliverDue(new Date('2026-08-07T00:00:01.000Z'));
+    expect(await database.get('pending_mutations', mutation.local_operation_id)).toMatchObject({
+      idempotency_key: mutation.idempotency_key,
+      retry_count: 1,
+      next_retry_at: '2026-08-07T00:00:06.000Z',
+      state: 'pending'
+    });
+    database.close();
+  });
+
   it('fails safely when conflict reconciliation cannot read a valid remote session', async () => {
     const database = await openControlPlaneDatabase(`delivery-${crypto.randomUUID()}`);
     const mutation = await queued(database, 'pause_session');
@@ -144,4 +164,5 @@ describe('durable mutation delivery', () => {
     expect(await database.getAll('pending_mutations')).toEqual([]);
     database.close();
   });
+
 });

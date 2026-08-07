@@ -15,6 +15,11 @@ export function retryAfterDelayMs(value: string | null): number | null {
 
 export function shouldRetryStatus(status: number | undefined): boolean {
   return (
-    status === undefined || status === 408 || status === 425 || status === 429 || status >= 500
+    status === undefined ||
+    status === 0 ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
   );
 }

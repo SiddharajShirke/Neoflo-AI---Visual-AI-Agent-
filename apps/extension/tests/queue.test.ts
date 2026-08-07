@@ -24,6 +24,7 @@ describe('offline retry policy', () => {
   });
 
   it('retries transport and transient failures but never permanent API failures', () => {
+    expect(shouldRetryStatus(0)).toBe(true);
     expect(shouldRetryStatus(undefined)).toBe(true);
     expect(shouldRetryStatus(429)).toBe(true);
     expect(shouldRetryStatus(500)).toBe(true);

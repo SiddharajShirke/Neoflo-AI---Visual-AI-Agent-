@@ -1,9 +1,11 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiClientError } from '../src/api/client.js';
 import { ControlPlaneOrchestrator } from '../src/core/orchestrator.js';
 import type { MonitoringState, MonitoringStateKind } from '../src/core/state-machine.js';
 import { openControlPlaneDatabase } from '../src/persistence/database.js';
 import { createPendingMutation, enqueueMutation } from '../src/queue/mutations.js';
+import { MutationDeliveryEngine } from '../src/queue/delivery.js';
 
 describe('control-plane orchestration', () => {
   const allStates: MonitoringStateKind[] = [
@@ -144,6 +146,91 @@ describe('control-plane orchestration', () => {
     );
     expect(await orchestrator.setMonitoringConsent(false)).toBe(true);
     expect(orchestrator.snapshot()).toMatchObject({ kind: 'READY', consentActive: false });
+    database.close();
+  });
+
+  it('queues an offline Start after a transport failure', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    const orchestrator = new ControlPlaneOrchestrator(
+      {
+        registerDevice: vi.fn().mockResolvedValue({ id: '10000000-0000-0000-0000-0000000000a1' }),
+        createConsent: vi.fn().mockResolvedValue({ id: '20000000-0000-0000-0000-0000000000a1' }),
+        createSession: vi.fn().mockRejectedValue(new ApiClientError(0, 'network_error'))
+      } as never,
+      database
+    );
+    await orchestrator.initialize(true);
+    await orchestrator.registerDevice();
+    await orchestrator.setMonitoringConsent(true);
+
+    await expect(orchestrator.start()).resolves.toBe(false);
+    expect(orchestrator.snapshot().kind).toBe('OFFLINE_BUFFERING');
+    expect(await database.getAll('pending_mutations')).toMatchObject([
+      { operation_type: 'create_session', state: 'pending', retry_count: 1 }
+    ]);
+    database.close();
+  });
+
+  it.each([
+    ['RECORDING', 'pause', 'pause_session'],
+    ['PAUSED', 'resume', 'resume_session'],
+    ['RECORDING', 'stop', 'complete_session']
+  ] as const)(
+    'queues an offline %s %s transition after a transport failure',
+    async (kind, action, operation) => {
+      const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+      const transportFailure = new ApiClientError(0, 'network_error');
+      const orchestrator = new ControlPlaneOrchestrator(
+        {
+          pauseSession: vi.fn().mockRejectedValue(transportFailure),
+          resumeSession: vi.fn().mockRejectedValue(transportFailure),
+          completeSession: vi.fn().mockRejectedValue(transportFailure)
+        } as never,
+        database
+      );
+      (orchestrator as unknown as { state: MonitoringState }).state = {
+        kind,
+        sessionId: 'session-1',
+        consentActive: true,
+        errorCode: null
+      };
+
+      await expect(orchestrator[action]()).resolves.toBe(false);
+      expect(orchestrator.snapshot().kind).toBe('OFFLINE_BUFFERING');
+      expect(await database.getAll('pending_mutations')).toMatchObject([
+        { operation_type: operation, state: 'pending', retry_count: 1 }
+      ]);
+      database.close();
+    }
+  );
+
+  it('caps a transient Start and all durable retries at seven total backend sends', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    const createSession = vi.fn().mockRejectedValue(new ApiClientError(503, 'unavailable'));
+    const api = {
+      registerDevice: vi.fn().mockResolvedValue({ id: '10000000-0000-0000-0000-0000000000a1' }),
+      createConsent: vi.fn().mockResolvedValue({ id: '20000000-0000-0000-0000-0000000000a1' }),
+      createSession
+    };
+    const orchestrator = new ControlPlaneOrchestrator(api as never, database);
+    await orchestrator.initialize(true);
+    await orchestrator.registerDevice();
+    await orchestrator.setMonitoringConsent(true);
+    await orchestrator.start();
+    const delivery = new MutationDeliveryEngine(database, api as never, { random: () => 1 });
+    const now = new Date('2026-08-07T00:00:00.000Z');
+
+    for (let retry = 0; retry < 7; retry += 1) {
+      const mutation = (await database.getAll('pending_mutations'))[0];
+      if (!mutation) break;
+      await database.put('pending_mutations', { ...mutation, next_retry_at: now.toISOString() });
+      await delivery.deliverDue(now);
+    }
+
+    expect(createSession).toHaveBeenCalledTimes(7);
+    expect(await database.getAll('pending_mutations')).toMatchObject([
+      { state: 'failed_permanent' }
+    ]);
     database.close();
   });
 

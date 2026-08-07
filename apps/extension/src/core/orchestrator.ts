@@ -6,7 +6,7 @@ import {
   enqueueMutation,
   type ControlPlaneMutationType
 } from '../queue/mutations.js';
-import { shouldRetryStatus } from '../queue/retry.js';
+import { nextRetryDelayMs, shouldRetryStatus } from '../queue/retry.js';
 import { initialMonitoringState, reduceMonitoring, type MonitoringState } from './state-machine.js';
 
 const CONSENT_POLICY_VERSION = 'm3-monitoring-v1';
@@ -258,7 +258,12 @@ export class ControlPlaneOrchestrator {
   ): Promise<void> {
     const status = error instanceof ApiClientError ? error.status : undefined;
     if (shouldRetryStatus(status)) {
-      await enqueueMutation(this.database, mutation);
+      const retryCount = mutation.retry_count + 1;
+      await enqueueMutation(this.database, {
+        ...mutation,
+        retry_count: retryCount,
+        next_retry_at: new Date(Date.now() + nextRetryDelayMs(mutation.retry_count)).toISOString()
+      });
       this.state = reduceMonitoring(this.state, { type: 'OFFLINE_BUFFERING' });
       return;
     }
