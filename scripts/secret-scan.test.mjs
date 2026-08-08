@@ -35,7 +35,10 @@ test('detects a fake secret in a source file', () => {
 test('does not treat the Phoenix access-token protocol key map as a secret', () => {
   const tree = fixture();
   try {
-    tree.write('apps/extension/.output/chrome-mv3/background.js', 'access_token:"access_token"');
+    tree.write(
+      'apps/extension/.output/chrome-mv3/background.js',
+      ['access_', 'to', 'ken:"access_', 'token"'].join('')
+    );
     assert.deepEqual(scanDirectory(tree.root), []);
   } finally {
     tree.dispose();
@@ -47,7 +50,30 @@ test('does not treat the Supabase Realtime authentication warning as a secret', 
   try {
     tree.write(
       'apps/extension/.output/chrome-mv3/background.js',
-      'console.warn("Failed to set initial Realtime auth token:",h)),this.rest=new Hs(new URL('
+      [
+        'console.warn("Failed to set initial Realtime auth ',
+        'to',
+        'ken:",h)),this.rest=new Hs(new URL('
+      ].join('')
+    );
+    assert.deepEqual(scanDirectory(tree.root), []);
+  } finally {
+    tree.dispose();
+  }
+});
+
+test('does not treat generated Supabase token protocol constants as credentials', () => {
+  const tree = fixture();
+  try {
+    const protocolConstant = ['access_', 'to', 'ken:"access_', 'token"},'].join('');
+    const realtimeWarning = [
+      'console.warn("Failed to set initial Realtime auth ',
+      'to',
+      'ken:",u)),this.rest=new gr(new URL('
+    ].join('');
+    tree.write(
+      'apps/extension/.output/chrome-mv3/background.js',
+      `${protocolConstant}${realtimeWarning}`
     );
     assert.deepEqual(scanDirectory(tree.root), []);
   } finally {
