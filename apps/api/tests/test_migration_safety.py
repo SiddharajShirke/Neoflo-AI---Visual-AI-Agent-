@@ -62,3 +62,71 @@ def test_control_plane_migration_keeps_idempotency_and_consent_withdrawal_server
     assert "to service_role" in migration
     assert "from public, anon, authenticated" in migration
     assert "set revoked_at = timezone('utc', now())" in migration
+
+
+def _m4_event_gate_migration() -> str:
+    return (ROOT / "supabase" / "migrations" / "0017_m4_browser_event_v2_gate.sql").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_m4_event_gate_is_forward_only_and_preserves_v1_columns() -> None:
+    migration = _m4_event_gate_migration()
+
+    assert "forward-only" in migration.lower()
+    assert "add column page_domain text" in migration
+    assert "add column transition_type text" in migration
+    assert "add column client_event_uuid uuid" in migration
+    assert "add column event_contract_version smallint not null default 1" in migration
+    for legacy_column in (
+        "client_event_id",
+        "page_origin",
+        "page_path_hash",
+        "page_title_redacted",
+        "accessibility_context_redacted",
+        "context_sha256",
+    ):
+        assert f"drop column {legacy_column}" not in migration
+
+
+def test_m4_event_gate_enforces_uuid_positive_sequence_and_top_level_transitions() -> None:
+    migration = _m4_event_gate_migration()
+
+    assert "client_event_uuid::text" in migration
+    assert "sequence_number > 0" in migration
+    assert "browser_events_v2_device_client_uuid_idx" in migration
+    for transition in (
+        "link",
+        "typed",
+        "auto_bookmark",
+        "generated",
+        "start_page",
+        "form_submit",
+        "reload",
+        "keyword",
+        "keyword_generated",
+    ):
+        assert f"'{transition}'" in migration
+    assert "auto_subframe" not in migration
+    assert "manual_subframe" not in migration
+
+
+def test_m4_event_gate_keeps_ingestion_privileged_and_request_body_free() -> None:
+    migration = _m4_event_gate_migration()
+
+    assert "security definer" in migration
+    assert "from public, anon, authenticated" in migration
+    assert "to service_role" in migration
+    assert "request_body" not in migration
+    assert "raw_request_body" not in migration
+    assert "event_contract_version = 2" in migration
+    assert "contract_version in (1, 2)" in migration
+
+
+def test_m4_queue_privacy_assertion_uses_portable_jsonb_key_enumeration() -> None:
+    queue_test = (ROOT / "supabase" / "tests" / "007_m4_browser_event_v2_gate.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "jsonb_object_length" not in queue_test
+    assert "jsonb_object_keys(message)" in queue_test

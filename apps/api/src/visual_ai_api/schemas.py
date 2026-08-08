@@ -9,7 +9,7 @@ from hashlib import sha256
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -37,7 +37,7 @@ class MonitoringSessionCreateRequest(StrictModel):
     started_at: datetime
 
 
-class BrowserEvent(StrictModel):
+class BrowserEventV1(StrictModel):
     client_event_id: str = Field(min_length=1, max_length=128)
     sequence_number: int = Field(ge=0)
     event_kind: Literal["navigation", "meaningful_action", "visibility_change"]
@@ -54,10 +54,65 @@ class BrowserEvent(StrictModel):
     capture_policy_version: str = Field(min_length=1, max_length=64)
 
 
-class EventBatch(StrictModel):
+class EventBatchV1(StrictModel):
     device_id: UUID
     session_id: UUID
-    events: list[BrowserEvent] = Field(min_length=1, max_length=100)
+    events: list[BrowserEventV1] = Field(min_length=1, max_length=100)
+
+
+TOP_LEVEL_TRANSITION_TYPES = (
+    "link",
+    "typed",
+    "auto_bookmark",
+    "generated",
+    "start_page",
+    "form_submit",
+    "reload",
+    "keyword",
+    "keyword_generated",
+)
+
+
+class BrowserEventV2(StrictModel):
+    client_event_id: UUID
+    sequence_number: int = Field(ge=1)
+    event_kind: Literal["navigation"]
+    occurred_at: datetime
+    page_domain: str = Field(
+        min_length=3,
+        max_length=253,
+        pattern=r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$",
+    )
+    transition_type: Literal[
+        "link",
+        "typed",
+        "auto_bookmark",
+        "generated",
+        "start_page",
+        "form_submit",
+        "reload",
+        "keyword",
+        "keyword_generated",
+    ]
+    capture_policy_version: str = Field(min_length=1, max_length=64)
+
+    @field_validator("page_domain")
+    @classmethod
+    def page_domain_is_normalized(cls, value: str) -> str:
+        if value != value.lower():
+            raise ValueError("page_domain must be lowercase")
+        return value
+
+
+class EventBatchV2(StrictModel):
+    device_id: UUID
+    session_id: UUID
+    events: list[BrowserEventV2] = Field(min_length=1, max_length=100)
+
+
+# Historical aliases are intentionally retained for v1 fixtures and direct repository tests.
+BrowserEvent = BrowserEventV1
+EventBatch = EventBatchV1
 
 
 class EventIngestionResponse(StrictModel):
@@ -140,8 +195,13 @@ ConsentCreate = ConsentCreateRequest
 SessionCreate = MonitoringSessionCreateRequest
 
 
-def event_batch_request_hash(payload: EventBatch) -> str:
+def event_batch_request_hash(payload: EventBatchV1) -> str:
     """Hash the persistence-relevant request deterministically, never retaining it."""
+    return canonical_request_hash(payload)
+
+
+def event_batch_v2_request_hash(payload: EventBatchV2) -> str:
+    """Hash the v2 request deterministically without retaining its body."""
     return canonical_request_hash(payload)
 
 

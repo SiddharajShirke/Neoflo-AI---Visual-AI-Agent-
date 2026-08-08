@@ -47,9 +47,11 @@ def test_sensitive_unknown_fixture_is_rejected_by_python_and_openapi() -> None:
         EventBatch.model_validate(payload)
 
     openapi = create_app(repository=MemoryRepository()).openapi()
-    event_schema = openapi["components"]["schemas"]["BrowserEvent"]
+    event_schema = openapi["components"]["schemas"]["BrowserEventV2"]
     assert event_schema["additionalProperties"] is False
     assert "raw_url" not in event_schema["properties"]
+    assert event_schema["properties"]["client_event_id"]["format"] == "uuid"
+    assert event_schema["properties"]["sequence_number"]["minimum"] == 1
 
 
 def test_openapi_marks_browser_routes_with_bearer_jwt_security() -> None:
@@ -58,9 +60,7 @@ def test_openapi_marks_browser_routes_with_bearer_jwt_security() -> None:
     assert schema["components"]["securitySchemes"] == {
         "HTTPBearer": {"type": "http", "scheme": "bearer"}
     }
-    assert schema["paths"]["/api/v1/events/batch"]["post"]["security"] == [
-        {"HTTPBearer": []}
-    ]
+    assert schema["paths"]["/api/v1/events/batch"]["post"]["security"] == [{"HTTPBearer": []}]
 
 
 def test_event_ingestion_response_is_strict_and_represented_in_openapi() -> None:
@@ -75,9 +75,12 @@ def test_event_ingestion_response_is_strict_and_represented_in_openapi() -> None
     schema = create_app(repository=MemoryRepository()).openapi()
     response_schema = schema["components"]["schemas"]["EventIngestionResponse"]
     assert response_schema["additionalProperties"] is False
-    assert schema["paths"]["/api/v1/events/batch"]["post"]["responses"]["202"]["content"][
-        "application/json"
-    ]["schema"]["$ref"] == "#/components/schemas/EventIngestionResponse"
+    assert (
+        schema["paths"]["/api/v1/events/batch"]["post"]["responses"]["202"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+        == "#/components/schemas/EventIngestionResponse"
+    )
 
 
 def test_control_plane_openapi_uses_strict_typed_request_and_response_models() -> None:
@@ -114,9 +117,7 @@ def test_api_errors_use_the_canonical_strict_response_model() -> None:
 
 
 def test_invalid_control_plane_requests_return_the_canonical_error_envelope() -> None:
-    response = TestClient(
-        create_app(repository=MemoryRepository(), verifier=FixedVerifier())
-    ).post(
+    response = TestClient(create_app(repository=MemoryRepository(), verifier=FixedVerifier())).post(
         "/api/v1/consents",
         headers={"Authorization": "Bearer user-a", "Idempotency-Key": "invalid-request"},
         json={"scope": "monitoring"},

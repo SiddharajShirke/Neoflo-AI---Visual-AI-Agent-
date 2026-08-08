@@ -14,7 +14,7 @@ import httpx
 from pydantic import TypeAdapter
 
 from .errors import ApiError
-from .schemas import BrowserEvent, ConsentCreate, DeviceRegister, SessionCreate
+from .schemas import BrowserEventV2, ConsentCreate, DeviceRegister, SessionCreate
 from .store import Consent, ControlMutationResult, Device, IngestResult, Session
 
 _JSON_SERIALIZER = TypeAdapter(object)
@@ -351,7 +351,7 @@ class PostgrestRepository:
         route: str,
         device_id: UUID,
         session_id: UUID,
-        events: list[BrowserEvent],
+        events: list[BrowserEventV2],
         key: str | None = None,
         request_hash: str | None = None,
     ) -> IngestResult:
@@ -375,7 +375,16 @@ class PostgrestRepository:
         )
         result = rows[0]
         outcome = result.get("outcome")
-        if outcome not in {"created", "completed", "conflict", "in_progress"}:
+        if outcome not in {
+            "created",
+            "completed",
+            "conflict",
+            "in_progress",
+            "device_inactive",
+            "consent_inactive",
+            "session_not_recording",
+            "policy_mismatch",
+        }:
             raise ApiError(503, "database_unavailable", "The service is unavailable.")
         return IngestResult(
             outcome,

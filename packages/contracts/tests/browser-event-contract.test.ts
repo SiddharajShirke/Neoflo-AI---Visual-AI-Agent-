@@ -6,6 +6,9 @@ import { isBrowserEventBatch, isEventIngestionResponse } from '../src/index.js';
 
 describe('browser event batch contract', () => {
   it('accepts the shared minimized fixture', () => {
+    expect(batchSchema.$id).toBe(
+      'https://visual-ai.example/schemas/events/browser-event-batch.v1.schema.json'
+    );
     expect(batchSchema.additionalProperties).toBe(false);
     expect(isBrowserEventBatch(validFixture)).toBe(true);
   });

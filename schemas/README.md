@@ -10,6 +10,12 @@ payloads and are the source for generated TypeScript types and validators.
 The event schema is intentionally redacted and cannot grow raw browser-content,
 cookie, credential, clipboard, screenshot, DOM, or user-ID fields.
 
+Milestone 4-A adds additive `browser-event.v2` and
+`browser-event-batch.v2` navigation contracts. They persist only a normalized
+page domain and approved top-level transition type; they reject URL, origin,
+title, page-content, browser tab/document identifiers, and transition
+qualifiers. The v1 contract remains historical and unchanged.
+
 Future milestones must version schemas additively and generate TypeScript and
 Python validation artifacts from them before adding cross-component behavior.
 Generated TypeScript artifacts are committed under

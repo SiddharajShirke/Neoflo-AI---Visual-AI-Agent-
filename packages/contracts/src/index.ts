@@ -11,6 +11,11 @@ export type {
   EventIngestionResponse
 } from './generated/browser-event.js';
 export type {
+  BrowserEventBatchV2,
+  BrowserEventV2,
+  BrowserEventV2Kind
+} from './generated/browser-event-v2.js';
+export type {
   ConsentCreateRequest,
   ConsentCreateResponse,
   ConsentListResponse,
@@ -40,12 +45,15 @@ export {
   isMonitoringSessionResponse,
   isSessionTransitionResponse
 } from './generated/control-plane.js';
+export { isBrowserEventBatchV2, isBrowserEventV2 } from './browser-event-v2.js';
 
 /** Stable names and strict TypeScript validators for canonical JSON schemas. */
 export const schemaVersions = {
   healthResponse: 'v1',
   browserEvent: 'v1',
   browserEventBatch: 'v1',
+  browserEventV2: 'v2',
+  browserEventBatchV2: 'v2',
   controlPlane: 'v1'
 } as const;
 
