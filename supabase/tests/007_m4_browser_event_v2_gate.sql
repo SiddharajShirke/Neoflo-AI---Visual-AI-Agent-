@@ -568,9 +568,11 @@ select results_eq(
   'version-2 queue body contains only event UUID and contract version'
 );
 select is(
-  (select count(*) from m4_queue_messages where jsonb_object_length(message) = 2),
-  1::bigint,
-  'queue body contains no page domain or browser metadata'
+  (select count(*)
+   from m4_queue_messages
+   cross join lateral jsonb_object_keys(message) as queue_key),
+  2::bigint,
+  'queue body contains exactly two keys and no browser metadata'
 );
 
 select * from finish();

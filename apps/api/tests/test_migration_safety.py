@@ -121,3 +121,12 @@ def test_m4_event_gate_keeps_ingestion_privileged_and_request_body_free() -> Non
     assert "raw_request_body" not in migration
     assert "event_contract_version = 2" in migration
     assert "contract_version in (1, 2)" in migration
+
+
+def test_m4_queue_privacy_assertion_uses_portable_jsonb_key_enumeration() -> None:
+    queue_test = (ROOT / "supabase" / "tests" / "007_m4_browser_event_v2_gate.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "jsonb_object_length" not in queue_test
+    assert "jsonb_object_keys(message)" in queue_test
