@@ -62,6 +62,9 @@ importers:
       '@visual-ai/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      tldts:
+        specifier: 7.0.20
+        version: 7.0.20
     devDependencies:
       fake-indexeddb:
         specifier: ^6.2.5
@@ -4603,6 +4606,19 @@ packages:
       }
     engines: { node: '>=12' }
 
+  tldts-core@7.4.10:
+    resolution:
+      {
+        integrity: sha512-KnQjp53ZekKgm/r3l+u8kJGGzYgrWdP8+Mql7a4vijh2WE0IrZWspQj/TpTxDho/YxO+AnOZnIjQcCD+q6iJsw==
+      }
+
+  tldts@7.0.20:
+    resolution:
+      {
+        integrity: sha512-TVQHdE8pbD1uhW4B79fQ7fkitS62TVGHZ1bwblOOobe3T8Zj96wvBVy7NFsAXexl1UYJ4z6f5fZp4AzOBIxRqA==
+      }
+    hasBin: true
+
   tmp@0.2.5:
     resolution:
       {
@@ -7611,6 +7627,12 @@ snapshots:
   tinyspy@3.0.2: {}
 
   titleize@3.0.0: {}
+
+  tldts-core@7.4.10: {}
+
+  tldts@7.0.20:
+    dependencies:
+      tldts-core: 7.4.10
 
   tmp@0.2.5: {}
 

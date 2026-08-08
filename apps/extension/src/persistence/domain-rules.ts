@@ -1,6 +1,17 @@
 /** Local future-monitoring exclusions only. This module never reads browser URLs. */
 import type { ControlPlaneDatabase } from './database.js';
 
+function normalizeHostnameForMatching(value: string): string {
+  return value.trim().toLowerCase().replace(/\.$/, '');
+}
+
+export function matchesDomainRule(hostname: string, rule: string): boolean {
+  const normalizedHostname = normalizeHostnameForMatching(hostname);
+  const normalizedRule = normalizeHostnameForMatching(rule);
+  if (!normalizedHostname || !normalizedRule) return false;
+  return normalizedHostname === normalizedRule || normalizedHostname.endsWith(`.${normalizedRule}`);
+}
+
 export function normalizeExcludedDomain(value: string): string {
   const trimmed = value
     .trim()
