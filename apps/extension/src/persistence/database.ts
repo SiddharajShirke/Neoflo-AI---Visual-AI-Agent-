@@ -1,3 +1,5 @@
+import { NavigationRepository } from '../navigation/navigation-repository.js';
+
 export const CONTROL_PLANE_STORES = [
   'extension_config',
   'device_metadata',
@@ -8,8 +10,23 @@ export const CONTROL_PLANE_STORES = [
   'sync_metadata'
 ] as const;
 
+export const NAVIGATION_STORES = ['navigation_event_buffer', 'navigation_batches'] as const;
+
+const STORE_KEY_PATHS = {
+  extension_config: 'id',
+  device_metadata: 'id',
+  monitoring_sessions: 'id',
+  pending_mutations: 'local_operation_id',
+  idempotency_records: 'id',
+  domain_rules: 'id',
+  sync_metadata: 'id',
+  navigation_event_buffer: 'client_event_id',
+  navigation_batches: 'batch_id'
+} as const;
+
 export type ControlPlaneStore = (typeof CONTROL_PLANE_STORES)[number];
-const DATABASE_VERSION = 2;
+export type NavigationStore = (typeof NAVIGATION_STORES)[number];
+export const DATABASE_VERSION = 3;
 
 const forbiddenField =
   /^(accesstoken|refreshtoken|password|authorization(?:header)?|cookies?|url|pageurl|dom|screenshot|clipboard|form(?:value|values)?|browserevent)$/i;
@@ -42,7 +59,28 @@ export class ControlPlaneDatabase {
     this.database.close();
   }
 
+  /**
+   * The only production entry point for navigation persistence. The raw
+   * IndexedDB handle intentionally never crosses this boundary.
+   */
+  createNavigationRepository(
+    now: () => Date = () => new Date(),
+    limits?: { maxPendingEvents?: number; maxPendingEventBytes?: number }
+  ): NavigationRepository {
+    return new NavigationRepository(this.database, now, limits);
+  }
+
   async put(store: ControlPlaneStore, value: Record<string, unknown>): Promise<void> {
+    if (!(CONTROL_PLANE_STORES as readonly string[]).includes(store)) {
+      throw new Error('navigation stores require the strict navigation repository');
+    }
+    if (
+      store === 'sync_metadata' &&
+      typeof value.id === 'string' &&
+      value.id.startsWith('navigation_')
+    ) {
+      throw new Error('navigation coordination requires the strict navigation repository');
+    }
     assertNonSecret(value);
     const transaction = this.database.transaction(store, 'readwrite');
     await requestResult(transaction.objectStore(store).put(value));
@@ -85,9 +123,12 @@ export function openControlPlaneDatabase(
       }
       CONTROL_PLANE_STORES.forEach((store) => {
         if (!database.objectStoreNames.contains(store)) {
-          database.createObjectStore(store, {
-            keyPath: store === 'pending_mutations' ? 'local_operation_id' : 'id'
-          });
+          database.createObjectStore(store, { keyPath: STORE_KEY_PATHS[store] });
+        }
+      });
+      NAVIGATION_STORES.forEach((store) => {
+        if (!database.objectStoreNames.contains(store)) {
+          database.createObjectStore(store, { keyPath: STORE_KEY_PATHS[store] });
         }
       });
     };

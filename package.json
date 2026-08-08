@@ -16,6 +16,8 @@
     "build": "turbo run build",
     "secret:scan": "node scripts/secret-scan.mjs",
     "secret:scan:test": "node --test scripts/secret-scan.test.mjs",
+    "extension:manifest:check": "node scripts/check-extension-manifest.mjs",
+    "extension:bundle:privacy:check": "node scripts/check-extension-bundle-privacy.mjs",
     "contracts:generate": "node scripts/generate-contracts.mjs",
     "contracts:check": "node scripts/generate-contracts.mjs --check && pnpm --filter @visual-ai/contracts test && node scripts/check-python-contracts.mjs",
     "contracts:generate:test": "node --test scripts/generate-contracts.test.mjs",

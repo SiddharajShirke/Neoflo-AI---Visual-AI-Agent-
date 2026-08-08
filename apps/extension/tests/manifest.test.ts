@@ -9,7 +9,7 @@ import {
 describe('extension foundation manifest', () => {
   it('uses only control-plane permissions and blocks incognito', () => {
     expect(extensionName).toBe('Visual AI Browser Agent');
-    expect(permissions).toEqual(['storage', 'alarms']);
+    expect(permissions).toEqual(['storage', 'alarms', 'webNavigation']);
     expect(manifestControlPlane.incognito).toBe('not_allowed');
     expect(manifestControlPlane).not.toHaveProperty('content_scripts');
   });
@@ -26,7 +26,6 @@ describe('extension foundation manifest', () => {
     const forbidden = [
       'tabs',
       'activeTab',
-      'webNavigation',
       'history',
       'cookies',
       'scripting',
@@ -37,7 +36,7 @@ describe('extension foundation manifest', () => {
       'desktopCapture',
       'sidePanel'
     ];
-    expect(permissions).toEqual(['storage', 'alarms']);
+    expect(permissions).toEqual(['storage', 'alarms', 'webNavigation']);
     expect(forbidden.some((permission) => permissions.includes(permission as never))).toBe(false);
     expect(hostPermissions).not.toContain('<all_urls>');
     expect(hostPermissions.every((permission) => !permission.startsWith('*://'))).toBe(true);

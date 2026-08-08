@@ -1,6 +1,6 @@
 /** MV3 control-plane permissions. Browser-content capabilities are intentionally absent. */
 export const extensionName = 'Visual AI Browser Agent';
-export const permissions = ['storage', 'alarms'] as const;
+export const permissions = ['storage', 'alarms', 'webNavigation'] as const;
 
 function exactHostPermission(value: string): string {
   const url = new URL(value);

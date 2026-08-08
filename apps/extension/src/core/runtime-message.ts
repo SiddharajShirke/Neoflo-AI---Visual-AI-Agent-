@@ -2,6 +2,10 @@ export type RuntimeMessage = { type: string; email?: string; password?: string; 
 
 type AuthState = { authenticated: boolean; email: string | null };
 type MonitoringState = { kind: string; sessionId: string | null; consentActive: boolean };
+type SafeNavigationSyncView = {
+  pendingCount: number;
+  syncState: 'healthy' | 'offline_buffering' | 'sync_error';
+};
 
 export interface RuntimeMessageDependencies {
   auth: {
@@ -20,8 +24,10 @@ export interface RuntimeMessageDependencies {
     stop(): Promise<unknown>;
   };
   blockQueuedMutations(): Promise<void>;
+  invalidateNavigation(reason: 'authentication_required' | 'consent_inactive'): Promise<void>;
   deliverAndSchedule(): Promise<void>;
   setIndicator(kind: string): Promise<void>;
+  getNavigationSyncView(): Promise<SafeNavigationSyncView>;
   listDomains(): Promise<string[]>;
   addDomain(domain: string): Promise<unknown>;
   removeDomain(domain: string): Promise<unknown>;
@@ -48,19 +54,26 @@ export async function dispatchRuntimeMessage(
     }
   }
   if (message.type === 'sign_out') {
+    await dependencies.invalidateNavigation('authentication_required');
     await dependencies.auth.signOut();
     await dependencies.blockQueuedMutations();
     const monitoring = await dependencies.orchestrator.initialize(false);
     await dependencies.setIndicator(monitoring.kind);
-    return { auth: { authenticated: false, email: null }, monitoring };
+    return {
+      auth: { authenticated: false, email: null },
+      monitoring,
+      navigation: await dependencies.getNavigationSyncView()
+    };
   }
 
   const auth = sanitizedAuthState(await dependencies.auth.state());
   await dependencies.orchestrator.initialize(auth.authenticated);
   if (auth.authenticated) await dependencies.orchestrator.registerDevice();
   if (message.type === 'grant_consent') await dependencies.orchestrator.setMonitoringConsent(true);
-  if (message.type === 'withdraw_consent')
+  if (message.type === 'withdraw_consent') {
+    await dependencies.invalidateNavigation('consent_inactive');
     await dependencies.orchestrator.setMonitoringConsent(false);
+  }
   if (message.type === 'start') await dependencies.orchestrator.start();
   if (message.type === 'pause') await dependencies.orchestrator.pause();
   if (message.type === 'resume') await dependencies.orchestrator.resume();
@@ -74,7 +87,8 @@ export async function dispatchRuntimeMessage(
       auth: { authenticated: false, email: null },
       monitoring,
       domains: await dependencies.listDomains(),
-      protectedCategories: dependencies.protectedCategories
+      protectedCategories: dependencies.protectedCategories,
+      navigation: await dependencies.getNavigationSyncView()
     };
   }
   if (message.type === 'retry_sync' && auth.authenticated) await dependencies.deliverAndSchedule();
@@ -89,6 +103,7 @@ export async function dispatchRuntimeMessage(
     auth,
     monitoring,
     domains: await dependencies.listDomains(),
-    protectedCategories: dependencies.protectedCategories
+    protectedCategories: dependencies.protectedCategories,
+    navigation: await dependencies.getNavigationSyncView()
   };
 }

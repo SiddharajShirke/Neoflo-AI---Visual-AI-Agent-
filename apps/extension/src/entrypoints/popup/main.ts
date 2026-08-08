@@ -1,11 +1,16 @@
 import { popupControls } from './view-model.js';
 
 type Monitoring = { kind: string; consentActive?: boolean; errorCode?: string | null };
+type Navigation = {
+  pendingCount: number;
+  syncState: 'healthy' | 'offline_buffering' | 'sync_error';
+};
 type Response = {
   auth?: { authenticated: boolean; email: string | null };
   monitoring?: Monitoring;
   domains?: string[];
   protectedCategories?: string[];
+  navigation?: Navigation;
   error?: string;
 };
 const runtime = (
@@ -55,7 +60,9 @@ async function send(message: object): Promise<void> {
   const response = await runtime.sendMessage(message);
   status.textContent =
     response.error ??
-    response.monitoring?.kind ??
+    (response.monitoring && response.navigation
+      ? `${response.monitoring.kind} · ${response.navigation.pendingCount} pending`
+      : response.monitoring?.kind) ??
     (response.auth?.authenticated ? 'READY' : 'SIGNED_OUT');
   controls.hidden = !response.auth?.authenticated;
   signIn.hidden = Boolean(response.auth?.authenticated);

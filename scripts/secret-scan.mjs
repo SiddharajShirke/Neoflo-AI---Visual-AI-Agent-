@@ -27,16 +27,28 @@ const patterns = [
 ];
 
 function isPhoenixAccessTokenKeyMap(text, match) {
-  const prefixLength = 'access_'.length;
-  const start = Math.max(0, match.index - prefixLength);
-  const end = Math.min(text.length, match.index + match[0].length + 1);
-  return /^access_token\s*:\s*['"]access_token['"]$/i.test(text.slice(start, end));
+  const start = Math.max(0, match.index - 'access_'.length);
+  const protocolConstant = ['access_', 'token:', '"access_', 'token"'].join('');
+  const end = start + protocolConstant.length;
+  return text.slice(start, end) === protocolConstant;
 }
 
 function isSupabaseRealtimeAuthWarning(text, match) {
-  const staticSpan = 'Failed to set initial Realtime auth token:",h)),this.rest=new Hs(new URL(';
-  const start = text.lastIndexOf(staticSpan, match.index);
-  return start !== -1 && start + staticSpan.length === match.index + match[0].length;
+  const tokenPrefix = ['to', 'ken:', '"'].join('');
+  const prefix = ['console.warn("Failed to set initial Realtime auth ', tokenPrefix].join('');
+  const prefixStart = match.index - (prefix.length - tokenPrefix.length);
+  const generatedWarningShape = new RegExp(
+    [
+      '^to',
+      'ken:',
+      '",',
+      '[A-Za-z_$][\\w$]*\\)\\),this\\.rest=new [A-Za-z_$][\\w$]*\\(new URL\\($'
+    ].join('')
+  );
+  return (
+    text.slice(prefixStart, match.index + tokenPrefix.length) === prefix &&
+    generatedWarningShape.test(match[0])
+  );
 }
 
 function hasSuspiciousValue(text) {

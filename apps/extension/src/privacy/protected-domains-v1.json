@@ -1,0 +1,41 @@
+{
+  "policy_version": "protected-domains-v1",
+  "provenance": {
+    "type": "first-party-curated",
+    "owner": "Neoflo Security & Privacy",
+    "reviewed_at": "2026-08-08",
+    "description": "Manually reviewed conservative seed rules."
+  },
+  "rules": [
+    {
+      "category": "authentication_account_recovery",
+      "domain": "accounts.google.com",
+      "match_type": "exact"
+    },
+    {
+      "category": "authentication_account_recovery",
+      "domain": "login.microsoftonline.com",
+      "match_type": "exact"
+    },
+    {
+      "category": "authentication_account_recovery",
+      "domain": "account.apple.com",
+      "match_type": "exact"
+    },
+    {
+      "category": "payments_financial",
+      "domain": "www.paypal.com",
+      "match_type": "exact"
+    },
+    {
+      "category": "payments_financial",
+      "domain": "secure.bankofamerica.com",
+      "match_type": "suffix"
+    },
+    {
+      "category": "health",
+      "domain": "portal.athenahealth.com",
+      "match_type": "suffix"
+    }
+  ]
+}

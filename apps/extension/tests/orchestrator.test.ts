@@ -3,11 +3,172 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiClientError } from '../src/api/client.js';
 import { ControlPlaneOrchestrator } from '../src/core/orchestrator.js';
 import type { MonitoringState, MonitoringStateKind } from '../src/core/state-machine.js';
+import { CaptureGate } from '../src/navigation/capture-gate.js';
 import { openControlPlaneDatabase } from '../src/persistence/database.js';
 import { createPendingMutation, enqueueMutation } from '../src/queue/mutations.js';
 import { MutationDeliveryEngine } from '../src/queue/delivery.js';
 
 describe('control-plane orchestration', () => {
+  it('opens navigation capture only after start receives a fresh M4 recording reconciliation', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    await database.put('device_metadata', { id: 'current', device_id: 'device-1' });
+    await database.put('extension_config', {
+      id: 'monitoring-consent',
+      consent_id: 'consent-1',
+      granted: true
+    });
+    const gate = new CaptureGate();
+    const repository = database.createNavigationRepository();
+    const createSession = vi.fn().mockResolvedValue({ id: 'session-1', status: 'recording' });
+    const getSession = vi.fn().mockResolvedValue({
+      id: 'session-1',
+      status: 'recording',
+      capturePolicyVersion: 'm4-navigation-v1'
+    });
+    const orchestrator = new ControlPlaneOrchestrator(
+      { createSession, getSession } as never,
+      database,
+      { gate, repository, schedulePendingDelivery: vi.fn(async () => undefined) }
+    );
+    await orchestrator.initialize(true);
+
+    await expect(orchestrator.start()).resolves.toBe(true);
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ capture_policy_version: 'm4-navigation-v1' }),
+      expect.any(String)
+    );
+    expect(getSession).toHaveBeenCalledWith('session-1');
+    expect(gate.acquire()?.context).toMatchObject({
+      deviceId: 'device-1',
+      sessionId: 'session-1',
+      capturePolicyVersion: 'm4-navigation-v1'
+    });
+    database.close();
+  });
+
+  it('delegates pause and stop control calls through the navigation drain barrier', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    const pauseSession = vi.fn().mockResolvedValue({ id: 'session-1', status: 'paused' });
+    const completeSession = vi.fn().mockResolvedValue({ id: 'session-1', status: 'completed' });
+    const requestPause = vi.fn(async (_sessionId: string, send: () => Promise<boolean>) => send());
+    const requestStop = vi.fn(async (_sessionId: string, send: () => Promise<boolean>) => send());
+    const orchestrator = new ControlPlaneOrchestrator(
+      { pauseSession, completeSession } as never,
+      database,
+      undefined,
+      { requestPause, requestStop, continuePersisted: vi.fn() }
+    );
+    (orchestrator as unknown as { state: MonitoringState }).state = {
+      kind: 'RECORDING',
+      sessionId: 'session-1',
+      consentActive: true,
+      errorCode: null
+    };
+
+    await expect(orchestrator.pause()).resolves.toBe(true);
+    expect(requestPause).toHaveBeenCalledOnce();
+    expect(pauseSession).toHaveBeenCalledOnce();
+    (orchestrator as unknown as { state: MonitoringState }).state = {
+      kind: 'RECORDING',
+      sessionId: 'session-1',
+      consentActive: true,
+      errorCode: null
+    };
+    await expect(orchestrator.stop()).resolves.toBe(true);
+    expect(requestStop).toHaveBeenCalledOnce();
+    expect(completeSession).toHaveBeenCalledOnce();
+    database.close();
+  });
+
+  it('does not reopen capture for a queued resume until fresh remote M4 recording authority resolves', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    await database.put('device_metadata', { id: 'current', device_id: 'device-1' });
+    await database.put('monitoring_sessions', {
+      id: 'current',
+      session_id: 'session-1',
+      status: 'paused',
+      capture_policy_version: 'm4-navigation-v1'
+    });
+    const gate = new CaptureGate();
+    const repository = database.createNavigationRepository();
+    let resolveRemote: ((value: unknown) => void) | undefined;
+    const remote = new Promise((resolve) => {
+      resolveRemote = resolve;
+    });
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'session-1',
+        status: 'paused',
+        capturePolicyVersion: 'm4-navigation-v1'
+      })
+      .mockReturnValueOnce(remote);
+    const orchestrator = new ControlPlaneOrchestrator({ getSession } as never, database, {
+      gate,
+      repository,
+      schedulePendingDelivery: vi.fn(async () => undefined)
+    });
+    await orchestrator.initialize(true);
+    const mutation = await createPendingMutation('resume_session', { session_id: 'session-1' });
+
+    const projected = orchestrator.applyDeliveredMutation(mutation, {
+      id: 'session-1',
+      status: 'recording'
+    });
+    await Promise.resolve();
+    expect(gate.acquire()).toBeNull();
+
+    resolveRemote?.({
+      id: 'session-1',
+      status: 'recording',
+      capturePolicyVersion: 'm4-navigation-v1'
+    });
+    await projected;
+
+    expect(gate.acquire()?.context).toMatchObject({
+      sessionId: 'session-1',
+      capturePolicyVersion: 'm4-navigation-v1'
+    });
+    database.close();
+  });
+
+  it('keeps capture closed when queued resume authority reconciliation is unavailable', async () => {
+    const database = await openControlPlaneDatabase(`orchestrator-${crypto.randomUUID()}`);
+    await database.put('device_metadata', { id: 'current', device_id: 'device-1' });
+    await database.put('monitoring_sessions', {
+      id: 'current',
+      session_id: 'session-1',
+      status: 'paused',
+      capture_policy_version: 'm4-navigation-v1'
+    });
+    const gate = new CaptureGate();
+    const repository = database.createNavigationRepository();
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'session-1',
+        status: 'paused',
+        capturePolicyVersion: 'm4-navigation-v1'
+      })
+      .mockRejectedValueOnce(new Error('offline'));
+    const orchestrator = new ControlPlaneOrchestrator({ getSession } as never, database, {
+      gate,
+      repository,
+      schedulePendingDelivery: vi.fn(async () => undefined)
+    });
+    await orchestrator.initialize(true);
+    const mutation = await createPendingMutation('resume_session', { session_id: 'session-1' });
+
+    await expect(
+      orchestrator.applyDeliveredMutation(mutation, { id: 'session-1', status: 'recording' })
+    ).resolves.toBeUndefined();
+
+    expect(orchestrator.snapshot()).toMatchObject({ kind: 'SYNC_ERROR' });
+    expect(gate.acquire()).toBeNull();
+    database.close();
+  });
+
   const allStates: MonitoringStateKind[] = [
     'UNCONFIGURED',
     'SIGNED_OUT',
@@ -140,7 +301,7 @@ describe('control-plane orchestration', () => {
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         screenshot_consent_id: null,
-        capture_policy_version: 'm3-capture-v1'
+        capture_policy_version: 'm4-navigation-v1'
       }),
       expect.any(String)
     );
@@ -301,7 +462,7 @@ describe('control-plane orchestration', () => {
       device_id: '10000000-0000-0000-0000-0000000000a1',
       monitoring_consent_id: '20000000-0000-0000-0000-0000000000a1',
       screenshot_consent_id: null,
-      capture_policy_version: 'm3-capture-v1',
+      capture_policy_version: 'm4-navigation-v1',
       started_at: now.toISOString()
     });
     expect(orchestrator.snapshot()).toMatchObject({

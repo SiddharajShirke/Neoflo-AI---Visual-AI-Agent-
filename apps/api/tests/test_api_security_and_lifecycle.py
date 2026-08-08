@@ -130,6 +130,29 @@ def test_terminal_session_deletion_is_asynchronous_and_idempotent() -> None:
     assert api.get(f"/api/v1/sessions/{session_id}", headers=auth()).status_code == 200
 
 
+def test_session_get_keeps_v1_body_and_exposes_capture_policy_as_a_header() -> None:
+    api = client()
+    device_id = create_device(api)
+    consent_id = create_monitoring_consent(api, device_id)
+    created = api.post(
+        "/api/v1/sessions",
+        headers={**auth(), "Idempotency-Key": "session-authority-header"},
+        json=session_payload(device_id, consent_id),
+    )
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    response = api.get(
+        f"/api/v1/sessions/{session_id}",
+        headers={**auth(), "Origin": "http://localhost:3000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": session_id, "status": "recording"}
+    assert response.headers["X-Capture-Policy-Version"] == "v1"
+    assert "x-capture-policy-version" in response.headers["access-control-expose-headers"].lower()
+
+
 def test_consent_creation_requires_an_idempotency_key() -> None:
     api = client()
     device_id = create_device(api)

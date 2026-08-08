@@ -9,8 +9,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.2",
     "@visual-ai/contracts": "workspace:*",
-    "@supabase/supabase-js": "^2.112.2"
+    "tldts": "7.0.20"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",
