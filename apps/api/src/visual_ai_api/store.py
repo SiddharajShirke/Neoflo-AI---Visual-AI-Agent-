@@ -133,7 +133,7 @@ class MemoryRepository:
         self.devices: dict[UUID, Device] = {}
         self.consents: dict[UUID, Consent] = {}
         self.sessions: dict[UUID, Session] = {}
-        self.events: dict[tuple[UUID, str], tuple[UUID, str]] = {}
+        self.events: dict[tuple[UUID, UUID], tuple[UUID, str]] = {}
         self.deletion_requests: dict[UUID, UUID] = {}
         self.idempotency: dict[tuple[UUID, str], tuple[str, str, dict[str, int]]] = {}
         self.control_idempotency: dict[tuple[UUID, str], tuple[str, str, int, dict[str, str]]] = {}
