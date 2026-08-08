@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { indicatorFor } from '../src/core/indicator.js';
-import { popupControls } from '../src/entrypoints/popup/view-model.js';
+import {
+  protectedDomainPolicyStatement,
+  popupControls,
+  safeNavigationSyncView
+} from '../src/entrypoints/popup/view-model.js';
 
 describe('popup state controls', () => {
   it.each([
@@ -35,5 +39,30 @@ describe('badge and title state mapping', () => {
     ['SIGNED_OUT', '', 'Sign in required']
   ])('maps %s to an explicit badge and title', (kind, text, title) => {
     expect(indicatorFor(kind)).toEqual({ text, title });
+  });
+});
+
+describe('safe navigation sync view', () => {
+  it('contains only queue count and sync state plus the non-exhaustive policy statement', () => {
+    expect(safeNavigationSyncView({ pendingCount: 2, syncState: 'offline_buffering' })).toEqual({
+      pendingCount: 2,
+      syncState: 'offline_buffering'
+    });
+    expect(protectedDomainPolicyStatement).toBe(
+      'The built-in protected-domain policy is a conservative, non-exhaustive protection layer. User exclusions provide additional protection.'
+    );
+  });
+
+  it('rejects browser-content fields and invalid safe sync states', () => {
+    expect(() =>
+      safeNavigationSyncView({
+        pendingCount: 1,
+        syncState: 'healthy',
+        pageDomain: 'example.test'
+      } as never)
+    ).toThrow();
+    expect(() =>
+      safeNavigationSyncView({ pendingCount: 1, syncState: 'recording' } as never)
+    ).toThrow();
   });
 });

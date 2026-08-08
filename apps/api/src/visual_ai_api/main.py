@@ -81,6 +81,7 @@ def create_app(
             allow_credentials=True,
             allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+            expose_headers=["X-Capture-Policy-Version"],
         )
 
     @app.middleware("http")
@@ -274,11 +275,12 @@ def create_app(
         tags=["sessions"],
         response_model=MonitoringSessionResponse,
     )
-    async def get_session(
-        session_id: UUID, user: CurrentUser = Depends(current_user)
-    ) -> dict[str, str]:
+    async def get_session(session_id: UUID, user: CurrentUser = Depends(current_user)) -> Response:
         session = await repository.owned_session(user.id, session_id)
-        return {"id": str(session.id), "status": session.status}
+        return JSONResponse(
+            {"id": str(session.id), "status": session.status},
+            headers={"X-Capture-Policy-Version": session.capture_policy_version},
+        )
 
     async def transition_session(
         session_id: UUID,

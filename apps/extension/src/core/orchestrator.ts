@@ -8,6 +8,8 @@ import {
   type PendingMutation
 } from '../queue/mutations.js';
 import { nextRetryDelayMs, shouldRetryStatus } from '../queue/retry.js';
+import { CaptureGate } from '../navigation/capture-gate.js';
+import type { NavigationRepository } from '../navigation/navigation-repository.js';
 import {
   initialMonitoringState,
   reduceMonitoring,
@@ -16,7 +18,33 @@ import {
 } from './state-machine.js';
 
 const CONSENT_POLICY_VERSION = 'm3-monitoring-v1';
-const CAPTURE_POLICY_VERSION = 'm3-capture-v1';
+const CAPTURE_POLICY_VERSION = 'm4-navigation-v1';
+const NAVIGATION_CAPTURE_POLICY_VERSION = 'm4-navigation-v1';
+
+export interface NavigationStartupDependencies {
+  gate: CaptureGate;
+  repository: Pick<
+    NavigationRepository,
+    'recoverStaleDelivering' | 'openSession' | 'getCoordinationState' | 'getLifecycleIntent'
+  >;
+  schedulePendingDelivery: () => Promise<void>;
+}
+
+export interface NavigationLifecycleDependencies {
+  requestPause(sessionId: string, sendPause: () => Promise<boolean>): Promise<boolean>;
+  requestStop(sessionId: string, sendComplete: () => Promise<boolean>): Promise<boolean>;
+  continuePersisted(
+    sessionId: string,
+    context: {
+      generation: number;
+      deviceId: string;
+      sessionId: string;
+      capturePolicyVersion: 'm4-navigation-v1';
+    },
+    intent: 'pause' | 'complete',
+    sendControl: () => Promise<boolean>
+  ): Promise<boolean>;
+}
 
 export class ControlPlaneOrchestrator {
   private state: MonitoringState = initialMonitoringState;
@@ -25,11 +53,29 @@ export class ControlPlaneOrchestrator {
 
   constructor(
     private readonly api: ApiClient,
-    private readonly database: ControlPlaneDatabase
+    private readonly database: ControlPlaneDatabase,
+    private readonly navigation?: NavigationStartupDependencies,
+    private readonly lifecycle?: NavigationLifecycleDependencies
   ) {}
 
   snapshot(): MonitoringState {
     return { ...this.state };
+  }
+
+  async applyReconciledSessionStatus(
+    sessionId: string,
+    status: RemoteSessionStatus
+  ): Promise<void> {
+    const current = await this.database.get<{
+      id: string;
+      session_id?: string;
+      capture_policy_version?: string;
+    }>('monitoring_sessions', 'current');
+    await this.projectSession(
+      sessionId,
+      status,
+      current?.session_id === sessionId ? current.capture_policy_version : undefined
+    );
   }
 
   async applyDeliveredMutation(mutation: PendingMutation, response: unknown): Promise<void> {
@@ -58,11 +104,45 @@ export class ControlPlaneOrchestrator {
     }
     const status = (response as { status?: unknown }).status;
     if (!isRemoteSessionStatus(status)) throw new Error('invalid_delivery_response');
-    await this.projectSession(id, status);
+    const queuedPolicy = mutation.payload.capture_policy_version;
+    await this.projectSession(
+      id,
+      status,
+      typeof queuedPolicy === 'string' ? queuedPolicy : undefined
+    );
+    if (
+      this.navigation &&
+      this.deviceId &&
+      (mutation.operation_type === 'create_session' || mutation.operation_type === 'resume_session')
+    ) {
+      try {
+        const remote = await this.api.getSession(id);
+        if (
+          remote.status !== 'recording' ||
+          remote.capturePolicyVersion !== NAVIGATION_CAPTURE_POLICY_VERSION
+        ) {
+          await this.navigation.gate.close();
+          this.state = reduceMonitoring(this.state, {
+            type: 'SYNC_ERROR',
+            code: 'queued_resume_reconciliation_failed'
+          });
+          return;
+        }
+        await this.openNavigationCapture(this.deviceId, remote.id);
+      } catch {
+        await this.navigation.gate.close();
+        this.state = reduceMonitoring(this.state, {
+          type: 'SYNC_ERROR',
+          code: 'queued_resume_reconciliation_failed'
+        });
+      }
+    }
   }
 
   async initialize(authenticated: boolean): Promise<MonitoringState> {
+    await this.navigation?.repository.recoverStaleDelivering();
     if (!authenticated) {
+      await this.navigation?.gate.close();
       this.state = reduceMonitoring(this.state, { type: 'SIGNED_OUT' });
       return this.snapshot();
     }
@@ -84,7 +164,9 @@ export class ControlPlaneOrchestrator {
       id: string;
       session_id?: string;
       status?: 'recording' | 'paused';
+      capture_policy_version?: string;
     }>('monitoring_sessions', 'current');
+    let remoteCapturePolicyVersion: string | null = null;
     if (session?.session_id && (session.status === 'recording' || session.status === 'paused')) {
       this.state = reduceMonitoring(this.state, {
         type: 'REMOTE_CONFIRMED',
@@ -93,6 +175,7 @@ export class ControlPlaneOrchestrator {
       });
       try {
         const remote = await this.api.getSession(session.session_id);
+        remoteCapturePolicyVersion = remote.capturePolicyVersion;
         this.state = reduceMonitoring(this.state, {
           type: 'REMOTE_CONFIRMED',
           status: remote.status,
@@ -102,7 +185,8 @@ export class ControlPlaneOrchestrator {
           id: 'current',
           session_id: remote.id,
           status: remote.status,
-          device_id: this.deviceId
+          device_id: this.deviceId,
+          capture_policy_version: session.capture_policy_version
         });
       } catch {
         this.state = reduceMonitoring(this.state, {
@@ -110,6 +194,50 @@ export class ControlPlaneOrchestrator {
           code: 'restart_reconciliation_failed'
         });
       }
+    }
+    const navigationSessionId = session?.session_id;
+    const navigationDeviceId = this.deviceId;
+    const lifecycleIntent = navigationSessionId
+      ? await this.navigation?.repository.getLifecycleIntent(navigationSessionId)
+      : null;
+    if (
+      lifecycleIntent !== null &&
+      lifecycleIntent !== undefined &&
+      navigationSessionId &&
+      navigationDeviceId &&
+      this.navigation &&
+      this.lifecycle
+    ) {
+      await this.navigation.gate.close();
+      const coordination = await this.navigation.repository.getCoordinationState();
+      if (coordination?.buffer_session_id !== navigationSessionId) return this.snapshot();
+      const completed = await this.lifecycle.continuePersisted(
+        navigationSessionId,
+        {
+          generation: coordination.gate_generation,
+          deviceId: navigationDeviceId,
+          sessionId: navigationSessionId,
+          capturePolicyVersion: NAVIGATION_CAPTURE_POLICY_VERSION
+        },
+        lifecycleIntent,
+        () =>
+          this.dispatchTransition(
+            navigationSessionId,
+            lifecycleIntent === 'pause' ? 'pause' : 'complete'
+          )
+      );
+      if (!completed) this.state = reduceMonitoring(this.state, { type: 'OFFLINE_BUFFERING' });
+      return this.snapshot();
+    }
+    const canOpenNavigationCapture =
+      this.state.kind === 'RECORDING' &&
+      typeof navigationSessionId === 'string' &&
+      remoteCapturePolicyVersion === NAVIGATION_CAPTURE_POLICY_VERSION &&
+      navigationDeviceId !== null;
+    if (canOpenNavigationCapture) {
+      await this.openNavigationCapture(navigationDeviceId, navigationSessionId);
+    } else {
+      await this.navigation?.gate.close();
     }
     return this.snapshot();
   }
@@ -183,7 +311,32 @@ export class ControlPlaneOrchestrator {
       await this.deferIfTransient(mutation, error);
       return false;
     }
-    await this.projectSession(response.id, response.status);
+    await this.projectSession(response.id, response.status, NAVIGATION_CAPTURE_POLICY_VERSION);
+    if (this.navigation) {
+      try {
+        const remote = await this.api.getSession(response.id);
+        if (
+          remote.status !== 'recording' ||
+          remote.capturePolicyVersion !== NAVIGATION_CAPTURE_POLICY_VERSION ||
+          !this.deviceId
+        ) {
+          await this.navigation.gate.close();
+          this.state = reduceMonitoring(this.state, {
+            type: 'SYNC_ERROR',
+            code: 'start_reconciliation_failed'
+          });
+          return false;
+        }
+        await this.openNavigationCapture(this.deviceId, remote.id);
+      } catch {
+        await this.navigation.gate.close();
+        this.state = reduceMonitoring(this.state, {
+          type: 'SYNC_ERROR',
+          code: 'start_reconciliation_failed'
+        });
+        return false;
+      }
+    }
     return true;
   }
 
@@ -191,7 +344,37 @@ export class ControlPlaneOrchestrator {
     return this.transition('PAUSE_REQUESTED', 'pause');
   }
   async resume(): Promise<boolean> {
-    return this.transition('RESUME_REQUESTED', 'resume');
+    const resumed = await this.transition('RESUME_REQUESTED', 'resume');
+    if (!resumed || !this.navigation || !this.deviceId || !this.state.sessionId) return resumed;
+    try {
+      const remote = await this.api.getSession(this.state.sessionId);
+      const saved = await this.database.get<{
+        id: string;
+        session_id?: string;
+        capture_policy_version?: string;
+      }>('monitoring_sessions', 'current');
+      if (
+        remote.status !== 'recording' ||
+        remote.capturePolicyVersion !== NAVIGATION_CAPTURE_POLICY_VERSION ||
+        saved?.session_id !== remote.id
+      ) {
+        await this.navigation.gate.close();
+        this.state = reduceMonitoring(this.state, {
+          type: 'SYNC_ERROR',
+          code: 'resume_reconciliation_failed'
+        });
+        return false;
+      }
+      await this.openNavigationCapture(this.deviceId, remote.id);
+      return true;
+    } catch {
+      await this.navigation.gate.close();
+      this.state = reduceMonitoring(this.state, {
+        type: 'SYNC_ERROR',
+        code: 'resume_reconciliation_failed'
+      });
+      return false;
+    }
   }
   async stop(): Promise<boolean> {
     return this.transition('STOP_REQUESTED', 'complete');
@@ -205,6 +388,27 @@ export class ControlPlaneOrchestrator {
     if (next === this.state || !this.state.sessionId) return false;
     const sessionId = this.state.sessionId;
     this.state = next;
+    if (action === 'pause' && this.lifecycle) {
+      const completed = await this.lifecycle.requestPause(sessionId, () =>
+        this.dispatchTransition(sessionId, action)
+      );
+      if (!completed) this.state = reduceMonitoring(this.state, { type: 'OFFLINE_BUFFERING' });
+      return completed;
+    }
+    if (action === 'complete' && this.lifecycle) {
+      const completed = await this.lifecycle.requestStop(sessionId, () =>
+        this.dispatchTransition(sessionId, action)
+      );
+      if (!completed) this.state = reduceMonitoring(this.state, { type: 'OFFLINE_BUFFERING' });
+      return completed;
+    }
+    return this.dispatchTransition(sessionId, action);
+  }
+
+  private async dispatchTransition(
+    sessionId: string,
+    action: 'pause' | 'resume' | 'complete'
+  ): Promise<boolean> {
     const operation: Record<typeof action, ControlPlaneMutationType> = {
       pause: 'pause_session',
       resume: 'resume_session',
@@ -298,17 +502,45 @@ export class ControlPlaneOrchestrator {
     this.state = reduceMonitoring(this.state, { type: 'READY', consentActive: granted });
   }
 
-  private async projectSession(sessionId: string, status: RemoteSessionStatus): Promise<void> {
+  private async openNavigationCapture(deviceId: string, sessionId: string): Promise<void> {
+    if (!this.navigation) return;
+    const context = this.navigation.gate.open({
+      deviceId,
+      sessionId,
+      capturePolicyVersion: NAVIGATION_CAPTURE_POLICY_VERSION
+    });
+    try {
+      await this.navigation.repository.openSession(context);
+      await this.navigation.schedulePendingDelivery();
+    } catch (error) {
+      await this.navigation.gate.close();
+      throw error;
+    }
+  }
+
+  private async projectSession(
+    sessionId: string,
+    status: RemoteSessionStatus,
+    capturePolicyVersion?: string
+  ): Promise<void> {
     this.state = reduceMonitoring(this.state, {
       type: 'REMOTE_CONFIRMED',
       status,
       sessionId
     });
+    const existing = await this.database.get<{
+      id: string;
+      session_id?: string;
+      capture_policy_version?: string;
+    }>('monitoring_sessions', 'current');
     await this.database.put('monitoring_sessions', {
       id: 'current',
       session_id: sessionId,
       status,
-      device_id: this.deviceId
+      device_id: this.deviceId,
+      capture_policy_version:
+        capturePolicyVersion ??
+        (existing?.session_id === sessionId ? existing.capture_policy_version : undefined)
     });
   }
 }

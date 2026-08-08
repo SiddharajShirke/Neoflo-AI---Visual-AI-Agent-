@@ -54,8 +54,10 @@ function services(
       stop: vi.fn(async () => true)
     },
     blockQueuedMutations: vi.fn(async () => undefined),
+    invalidateNavigation: vi.fn(async () => undefined),
     deliverAndSchedule: vi.fn(async () => undefined),
     setIndicator: vi.fn(async () => undefined),
+    getNavigationSyncView: vi.fn(async () => ({ pendingCount: 0, syncState: 'healthy' as const })),
     listDomains: vi.fn(async () => ['example.test']),
     addDomain: vi.fn(async () => undefined),
     removeDomain: vi.fn(async () => undefined),
@@ -107,10 +109,46 @@ describe('background runtime-message auth boundary', () => {
     const response = await dispatchRuntimeMessage({ type: 'sign_out' }, dependencies);
     expect(response).toEqual({
       auth: { authenticated: false, email: null },
-      monitoring: { kind: 'READY', sessionId: null, consentActive: true }
+      monitoring: { kind: 'READY', sessionId: null, consentActive: true },
+      navigation: { pendingCount: 0, syncState: 'healthy' }
     });
     expect(dependencies.blockQueuedMutations).toHaveBeenCalledOnce();
     expect(containsSensitive(response)).toBe(false);
+  });
+
+  it('invalidates buffered navigation before direct popup sign-out clears auth', async () => {
+    const dependencies = services();
+    const order: string[] = [];
+    dependencies.invalidateNavigation.mockImplementation(async () => {
+      order.push('invalidate');
+    });
+    dependencies.auth.signOut.mockImplementation(async () => {
+      order.push('sign-out');
+    });
+
+    await dispatchRuntimeMessage({ type: 'sign_out' }, dependencies);
+
+    expect(order).toEqual(['invalidate', 'sign-out']);
+    expect(dependencies.invalidateNavigation).toHaveBeenCalledExactlyOnceWith(
+      'authentication_required'
+    );
+  });
+
+  it('invalidates buffered navigation before local consent withdrawal', async () => {
+    const dependencies = services();
+    const order: string[] = [];
+    dependencies.invalidateNavigation.mockImplementation(async () => {
+      order.push('invalidate');
+    });
+    dependencies.orchestrator.setMonitoringConsent.mockImplementation(async () => {
+      order.push('withdraw');
+      return true;
+    });
+
+    await dispatchRuntimeMessage({ type: 'withdraw_consent' }, dependencies);
+
+    expect(order).toEqual(['invalidate', 'withdraw']);
+    expect(dependencies.invalidateNavigation).toHaveBeenCalledExactlyOnceWith('consent_inactive');
   });
 
   it('clears worker auth and returns a signed-out popup response after a final direct 401', async () => {

@@ -30,10 +30,10 @@
         <button data-command="retry_sync">Retry synchronization</button>
         <button data-command="sign_out">Sign out</button>
         <section aria-label="Privacy settings">
-          <h2>Future monitoring exclusions</h2>
+          <h2>Navigation exclusions</h2>
           <p>
-            Local configuration only. This extension does not inspect current browser URLs or
-            enforce exclusions in Milestone 3.
+            Local exclusions are applied before a top-level navigation event is stored. The
+            extension does not display or retain browser URLs.
           </p>
           <form id="domain-form">
             <input
@@ -44,6 +44,10 @@
           </form>
           <ul id="domain-list"></ul>
           <h3>Always protected categories</h3>
+          <p>
+            The built-in protected-domain policy is a conservative, non-exhaustive protection layer.
+            User exclusions provide additional protection.
+          </p>
           <ul id="protected-categories"></ul>
         </section>
         <a id="dashboard" target="_blank" rel="noreferrer">Dashboard</a>
