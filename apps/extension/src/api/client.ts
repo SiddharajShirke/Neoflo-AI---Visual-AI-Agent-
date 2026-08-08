@@ -7,6 +7,8 @@ import {
   isDeviceListResponse,
   isDeviceRegisterRequest,
   isDeviceRegisterResponse,
+  isBrowserEventBatchV2,
+  isEventIngestionResponse,
   isMonitoringSessionCreateRequest,
   isMonitoringSessionCreateResponse,
   isMonitoringSessionListResponse,
@@ -19,6 +21,8 @@ import {
   type DeviceListResponse,
   type DeviceRegisterRequest,
   type DeviceRegisterResponse,
+  type BrowserEventBatchV2,
+  type EventIngestionResponse,
   type MonitoringSessionCreateRequest,
   type MonitoringSessionCreateResponse,
   type MonitoringSessionListResponse,
@@ -28,6 +32,14 @@ import {
 
 type Validator<T> = (value: unknown) => value is T;
 type Fetcher = typeof fetch;
+
+function validatedCapturePolicyVersion(value: string | null): string | null {
+  return value !== null && /^[a-z0-9](?:[a-z0-9-]{0,63})$/.test(value) ? value : null;
+}
+
+export type MonitoringSessionAuthority = MonitoringSessionResponse & {
+  readonly capturePolicyVersion: string | null;
+};
 
 export class ApiClientError extends Error {
   constructor(
@@ -102,8 +114,16 @@ export class ApiClient {
   listSessions(): Promise<MonitoringSessionListResponse> {
     return this.#request('/api/v1/sessions', 'GET', isMonitoringSessionListResponse);
   }
-  getSession(sessionId: string): Promise<MonitoringSessionResponse> {
-    return this.#request(`/api/v1/sessions/${sessionId}`, 'GET', isMonitoringSessionResponse);
+  async getSession(sessionId: string): Promise<MonitoringSessionAuthority> {
+    return this.#request(
+      `/api/v1/sessions/${sessionId}`,
+      'GET',
+      isMonitoringSessionResponse,
+      undefined,
+      undefined,
+      true,
+      true
+    ) as Promise<MonitoringSessionAuthority>;
   }
   pauseSession(sessionId: string, idempotencyKey: string): Promise<SessionTransitionResponse> {
     return this.#transition(sessionId, 'pause', idempotencyKey);
@@ -119,6 +139,20 @@ export class ApiClient {
   }
   requestSessionDeletion(sessionId: string): Promise<DeletionRequestResponse> {
     return this.#request(`/api/v1/sessions/${sessionId}`, 'DELETE', isDeletionRequestResponse);
+  }
+  ingestBrowserEventBatch(
+    payload: BrowserEventBatchV2,
+    idempotencyKey: string
+  ): Promise<EventIngestionResponse> {
+    this.#assertRequest(isBrowserEventBatchV2, payload);
+    return this.#request(
+      '/api/v1/events/batch',
+      'POST',
+      isEventIngestionResponse,
+      payload,
+      idempotencyKey,
+      'refresh_without_retry'
+    );
   }
 
   #transition(
@@ -144,7 +178,9 @@ export class ApiClient {
     method: 'GET' | 'POST' | 'DELETE',
     validator: Validator<T>,
     body?: unknown,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    refreshMode: boolean | 'refresh_without_retry' = true,
+    includeCapturePolicyHeader = false
   ): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const token = await this.accessToken();
@@ -164,7 +200,11 @@ export class ApiClient {
       }
       const payload: unknown = await response.json().catch(() => null);
       if (response.status === 401) {
-        if (attempt === 0 && (await this.refreshAccessToken())) continue;
+        if (attempt === 0 && refreshMode && (await this.refreshAccessToken())) {
+          if (refreshMode === 'refresh_without_retry')
+            throw new ApiClientError(401, 'authentication_refreshed');
+          continue;
+        }
         throw new ApiClientError(401, 'authentication_required');
       }
       if (!response.ok) {
@@ -172,6 +212,14 @@ export class ApiClient {
         throw new ApiClientError(response.status, code, response.headers.get('Retry-After'));
       }
       if (!validator(payload)) throw new ApiClientError(502, 'invalid_response_contract');
+      if (includeCapturePolicyHeader) {
+        return {
+          ...(payload as Record<string, unknown>),
+          capturePolicyVersion: validatedCapturePolicyVersion(
+            response.headers.get('X-Capture-Policy-Version')
+          )
+        } as T;
+      }
       return payload;
     }
     throw new ApiClientError(401, 'authentication_required');
