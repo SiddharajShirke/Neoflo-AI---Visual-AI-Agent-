@@ -1,11 +1,17 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import { CONTROL_PLANE_STORES, openControlPlaneDatabase } from '../src/persistence/database.js';
+import {
+  CONTROL_PLANE_STORES,
+  NAVIGATION_STORES,
+  openControlPlaneDatabase
+} from '../src/persistence/database.js';
 
 describe('control-plane IndexedDB', () => {
   it('creates every versioned non-secret store', async () => {
     const database = await openControlPlaneDatabase(`m3-${crypto.randomUUID()}`);
-    expect([...database.objectStoreNames].sort()).toEqual([...CONTROL_PLANE_STORES].sort());
+    expect([...database.objectStoreNames].sort()).toEqual(
+      [...CONTROL_PLANE_STORES, ...NAVIGATION_STORES].sort()
+    );
     database.close();
   });
 
@@ -63,7 +69,66 @@ describe('control-plane IndexedDB', () => {
       request.onerror = () => reject(request.error);
     });
     const database = await openControlPlaneDatabase(name);
-    expect([...database.objectStoreNames].sort()).toEqual([...CONTROL_PLANE_STORES].sort());
+    expect([...database.objectStoreNames].sort()).toEqual(
+      [...CONTROL_PLANE_STORES, ...NAVIGATION_STORES].sort()
+    );
     database.close();
+  });
+
+  it('upgrades version two without changing existing stores or records', async () => {
+    const name = `m4-upgrade-${crypto.randomUUID()}`;
+    const existingRows = new Map(
+      CONTROL_PLANE_STORES.map((store) => [
+        store,
+        store === 'pending_mutations'
+          ? { local_operation_id: `existing-${store}`, value: store }
+          : { id: `existing-${store}`, value: store }
+      ])
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(name, 2);
+      request.onupgradeneeded = () => {
+        for (const store of CONTROL_PLANE_STORES) {
+          const objectStore = request.result.createObjectStore(store, {
+            keyPath: store === 'pending_mutations' ? 'local_operation_id' : 'id'
+          });
+          objectStore.put(existingRows.get(store)!);
+        }
+      };
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+
+    const database = await openControlPlaneDatabase(name);
+    expect([...database.objectStoreNames].sort()).toEqual(
+      [...CONTROL_PLANE_STORES, ...NAVIGATION_STORES].sort()
+    );
+    for (const store of CONTROL_PLANE_STORES) {
+      await expect(database.get(store, `existing-${store}`)).resolves.toEqual(
+        existingRows.get(store)
+      );
+    }
+    database.close();
+
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(name, 3);
+      request.onsuccess = () => {
+        const upgraded = request.result;
+        expect(
+          upgraded.transaction('navigation_event_buffer').objectStore('navigation_event_buffer')
+            .keyPath
+        ).toBe('client_event_id');
+        expect(
+          upgraded.transaction('navigation_batches').objectStore('navigation_batches').keyPath
+        ).toBe('batch_id');
+        upgraded.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
   });
 });
